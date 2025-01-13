@@ -2,67 +2,13 @@ import { cancel } from "@ember/runloop";
 import { htmlSafe } from "@ember/template";
 import { ajax } from "discourse/lib/ajax";
 import { CANCELLED_STATUS } from "discourse/lib/autocomplete";
+import discourseDebounce from "discourse/lib/debounce";
+import { INPUT_DELAY, isTesting } from "discourse/lib/environment";
+import { getHashtagTypeClasses as getHashtagTypeClassesNew } from "discourse/lib/hashtag-type-registry";
+import discourseLater from "discourse/lib/later";
+import { findRawTemplate } from "discourse/lib/raw-templates";
 import { emojiUnescape } from "discourse/lib/text";
-import {
-  caretPosition,
-  escapeExpression,
-  inCodeBlock,
-} from "discourse/lib/utilities";
-import { INPUT_DELAY, isTesting } from "discourse-common/config/environment";
-import discourseDebounce from "discourse-common/lib/debounce";
-import domFromString from "discourse-common/lib/dom-from-string";
-import discourseLater from "discourse-common/lib/later";
-import { findRawTemplate } from "discourse-common/lib/raw-templates";
-
-let hashtagTypeClasses = {};
-export function registerHashtagType(type, typeClassInstance) {
-  hashtagTypeClasses[type] = typeClassInstance;
-}
-export function cleanUpHashtagTypeClasses() {
-  hashtagTypeClasses = {};
-}
-export function getHashtagTypeClasses() {
-  return hashtagTypeClasses;
-}
-export function decorateHashtags(element, site) {
-  element.querySelectorAll(".hashtag-cooked").forEach((hashtagEl) => {
-    // Replace the empty icon placeholder span with actual icon HTML.
-    const iconPlaceholderEl = hashtagEl.querySelector(
-      ".hashtag-icon-placeholder"
-    );
-    const hashtagType = hashtagEl.dataset.type;
-    const hashtagTypeClass = getHashtagTypeClasses()[hashtagType];
-    if (iconPlaceholderEl && hashtagTypeClass) {
-      const hashtagIconHTML = hashtagTypeClass
-        .generateIconHTML({
-          icon: site.hashtag_icons[hashtagType],
-          id: hashtagEl.dataset.id,
-        })
-        .trim();
-      iconPlaceholderEl.replaceWith(domFromString(hashtagIconHTML)[0]);
-    }
-
-    // Add an aria-label to the hashtag element so that screen readers
-    // can read the hashtag text.
-    hashtagEl.setAttribute("aria-label", `${hashtagEl.innerText.trim()}`);
-  });
-}
-
-export function generatePlaceholderHashtagHTML(type, spanEl, data) {
-  // NOTE: When changing the HTML structure here, you must also change
-  // it in the hashtag-autocomplete markdown rule, and vice-versa.
-  const link = document.createElement("a");
-  link.classList.add("hashtag-cooked");
-  link.href = data.relative_url;
-  link.dataset.type = type;
-  link.dataset.id = data.id;
-  link.dataset.slug = data.slug;
-  const hashtagTypeClass = new getHashtagTypeClasses()[type];
-  link.innerHTML = `${hashtagTypeClass.generateIconHTML(
-    data
-  )}<span>${emojiUnescape(data.text)}</span>`;
-  spanEl.replaceWith(link);
-}
+import { escapeExpression } from "discourse/lib/utilities";
 
 /**
  * Sets up a textarea using the jQuery autocomplete plugin, specifically
@@ -87,88 +33,31 @@ export function generatePlaceholderHashtagHTML(type, spanEl, data) {
  **/
 export function setupHashtagAutocomplete(
   contextualHashtagConfiguration,
-  $textArea,
+  $textarea,
   siteSettings,
   autocompleteOptions = {}
 ) {
-  _setup(
-    contextualHashtagConfiguration,
-    $textArea,
-    siteSettings,
-    autocompleteOptions
+  $textarea.autocomplete(
+    hashtagAutocompleteOptions(
+      contextualHashtagConfiguration,
+      siteSettings,
+      autocompleteOptions
+    )
   );
 }
 
-export function hashtagTriggerRule(textarea) {
-  if (inCodeBlock(textarea.value, caretPosition(textarea))) {
-    return false;
-  }
-
-  return true;
+export async function hashtagTriggerRule(textarea, { inCodeBlock }) {
+  return !(await inCodeBlock());
 }
 
-const checkedHashtags = new Set();
-let seenHashtags = {};
-
-// NOTE: For future maintainers, the hashtag lookup here does not take
-// into account mixed contexts -- for instance, a chat quote inside a post
-// or a post quote inside a chat message, so this may
-// not provide an accurate priority lookup for hashtags without a ::type suffix in those
-// cases.
-export function fetchUnseenHashtagsInContext(
+export function hashtagAutocompleteOptions(
   contextualHashtagConfiguration,
-  slugs
-) {
-  return ajax("/hashtags", {
-    data: { slugs, order: contextualHashtagConfiguration },
-  }).then((response) => {
-    Object.keys(response).forEach((type) => {
-      seenHashtags[type] = seenHashtags[type] || {};
-      response[type].forEach((item) => {
-        seenHashtags[type][item.ref] = seenHashtags[type][item.ref] || item;
-      });
-    });
-    slugs.forEach(checkedHashtags.add, checkedHashtags);
-  });
-}
-
-export function linkSeenHashtagsInContext(
-  contextualHashtagConfiguration,
-  elem
-) {
-  const hashtagSpans = [...(elem?.querySelectorAll("span.hashtag-raw") || [])];
-  if (hashtagSpans.length === 0) {
-    return [];
-  }
-  const slugs = [
-    ...hashtagSpans.map((span) => span.innerText.replace("#", "")),
-  ];
-
-  hashtagSpans.forEach((hashtagSpan, index) => {
-    _findAndReplaceSeenHashtagPlaceholder(
-      slugs[index],
-      contextualHashtagConfiguration,
-      hashtagSpan
-    );
-  });
-
-  return slugs
-    .map((slug) => slug.toLowerCase())
-    .uniq()
-    .filter((slug) => !checkedHashtags.has(slug));
-}
-
-function _setup(
-  contextualHashtagConfiguration,
-  $textArea,
   siteSettings,
   autocompleteOptions
 ) {
-  $textArea.autocomplete({
+  return {
     template: findRawTemplate("hashtag-autocomplete"),
     key: "#",
-    afterComplete: autocompleteOptions.afterComplete,
-    treatAsTextarea: autocompleteOptions.treatAsTextarea,
     scrollElementSelector: ".hashtag-autocomplete__fadeout",
     autoSelectFirstSuggestion: true,
     transformComplete: (obj) => obj.ref,
@@ -178,8 +67,10 @@ function _setup(
       }
       return _searchGeneric(term, siteSettings, contextualHashtagConfiguration);
     },
-    triggerRule: (textarea, opts) => hashtagTriggerRule(textarea, opts),
-  });
+    triggerRule: async (textarea, opts) =>
+      await hashtagTriggerRule(textarea, opts),
+    ...autocompleteOptions,
+  };
 }
 
 let searchCache = {};
@@ -236,8 +127,10 @@ function _searchRequest(term, contextualHashtagConfiguration, resultFunc) {
         // Convert :emoji: in the result text to HTML safely.
         result.text = htmlSafe(emojiUnescape(escapeExpression(result.text)));
 
-        const hashtagType = getHashtagTypeClasses()[result.type];
+        const hashtagType = getHashtagTypeClassesNew()[result.type];
         result.icon = hashtagType.generateIconHTML({
+          preloaded: true,
+          colors: result.colors,
           icon: result.icon,
           id: result.id,
         });
@@ -248,18 +141,4 @@ function _searchRequest(term, contextualHashtagConfiguration, resultFunc) {
       currentSearch = null;
     });
   return currentSearch;
-}
-
-function _findAndReplaceSeenHashtagPlaceholder(
-  slugRef,
-  contextualHashtagConfiguration,
-  hashtagSpan
-) {
-  contextualHashtagConfiguration.forEach((type) => {
-    // Replace raw span for the hashtag with a cooked one
-    const matchingSeenHashtag = seenHashtags[type]?.[slugRef];
-    if (matchingSeenHashtag) {
-      generatePlaceholderHashtagHTML(type, hashtagSpan, matchingSeenHashtag);
-    }
-  });
 }

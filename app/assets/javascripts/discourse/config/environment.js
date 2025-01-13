@@ -15,7 +15,9 @@ module.exports = function (environment) {
       EXTEND_PROTOTYPES: {
         // Prevent Ember Data from overriding Date.parse.
         Date: false,
+        String: false,
       },
+      LOG_STACKTRACE_ON_DEPRECATION: false,
     },
     exportApplicationGlobal: true,
 

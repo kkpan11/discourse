@@ -13,6 +13,8 @@ vi:
           never: "Không bao giờ"
     chat:
       deleted_chat_username: đã bị xóa
+      dates:
+        yesterday: "Hôm qua"
       create: "Tạo"
       cancel: "Huỷ"
       channel_settings:
@@ -33,8 +35,6 @@ vi:
       flag: "Gắn cờ"
       join: "Tham gia"
       last_visit: "lần thăm cuối"
-      summarization:
-        summarize: "Tóm tắt"
       mention_warning:
         groups:
           header:
@@ -46,6 +46,7 @@ vi:
       bookmark_message: "Đánh dấu chỉ mục"
       bookmark_message_edit: "Chỉnh sửa Dấu trang"
       save: "Lưu lại"
+      select: "Chọn"
       sounds:
         none: "Không có gì"
       exit: "quay lại"
@@ -55,6 +56,7 @@ vi:
       browse:
         back: "Quay lại"
         filter_all: All
+        filter_open: Mở
         filter_closed: Đã
       chat_message_separator:
         today: Hôm nay
@@ -70,6 +72,7 @@ vi:
           settings: Cài đặt
       new_message_modal:
         no_items: "Không có mẫu nào"
+        filter: "Lọc"
       direct_message_creator:
         title: Tin nhắn mới
         prefix: "Tới:"
@@ -98,6 +101,8 @@ vi:
         category_label: "Danh mục"
         history_label: "Lịch sử"
         members_label: "Các thành viên"
+      direct_messages:
+        title: "Tin nhắn"
       incoming_webhooks:
         back: "Quay lại"
         description: "Mô tả"
@@ -119,9 +124,7 @@ vi:
         new_message:
           title: "Chuyển đến tin nhắn mới"
       retention_reminders:
-        public:
-          other: "%{count} ngày"
-        dm:
+        short:
           other: "%{count} ngày"
       flags:
         notify_moderators: "Thông báo này yêu cầu sự chú ý của nhân viên vì một lý do khác không được liệt kê ở trên."
@@ -141,6 +144,8 @@ vi:
             title: "Bình thường"
           tracking:
             title: "Đang theo dõi"
+          watching:
+            title: "Theo dõi"
         participants_other_count:
           other: "+%{count}"
       draft_channel_screen:
@@ -148,6 +153,8 @@ vi:
         cancel: "Huỷ"
     notifications:
       chat_quoted: "<span>%{username}</span> %{description}"
+      chat_watched_thread_label:
+        other: "%{username} và %{count} người khác"
     discourse_automation:
       scriptables:
         send_chat_message:

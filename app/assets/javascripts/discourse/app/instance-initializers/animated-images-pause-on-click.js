@@ -1,6 +1,6 @@
+import { iconHTML } from "discourse/lib/icon-library";
 import { withPluginApi } from "discourse/lib/plugin-api";
 import { prefersReducedMotion } from "discourse/lib/utilities";
-import { iconHTML } from "discourse-common/lib/icon-library";
 
 let _gifClickHandlers = {};
 
@@ -58,7 +58,7 @@ export default {
           return;
         }
 
-        let images = post.querySelectorAll("img.animated");
+        let images = post.querySelectorAll("img.animated:not(.onebox-avatar)");
 
         images.forEach((img) => {
           // skip for edge case of multiple animated images in same block

@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 describe "Viewing sidebar as logged in user", type: :system do
-  fab!(:admin) { Fabricate(:admin) }
-  fab!(:user) { Fabricate(:user) }
+  fab!(:admin)
+  fab!(:user)
   fab!(:category_sidebar_section_link) { Fabricate(:category_sidebar_section_link, user: user) }
 
   let(:sidebar) { PageObjects::Components::NavigationMenu::Sidebar.new }
@@ -56,10 +56,8 @@ describe "Viewing sidebar as logged in user", type: :system do
       sign_in user
       visit("/latest")
       links = page.all("#sidebar-section-content-community .sidebar-section-link-wrapper a")
-      expect(links.map(&:text)).to eq(%w[Tematy Wysłane])
-      expect(links.map { |link| link[:title] }).to eq(
-        ["Wszystkie tematy", "Moja ostatnia aktywność w temacie"],
-      )
+      expect(links.map(&:text)).to eq(%w[Tematy])
+      expect(links.map { |link| link[:title] }).to eq(["Wszystkie tematy"])
     end
   end
 
@@ -135,5 +133,11 @@ describe "Viewing sidebar as logged in user", type: :system do
       expect(sidebar).to have_tag_section_link_with_title(tag1, "tag 1 description ")
       expect(sidebar).to have_all_tags_section_link
     end
+  end
+
+  it "shouldn't display the panel header for the main sidebar" do
+    visit("/latest")
+    expect(sidebar).to be_visible
+    expect(sidebar).to have_no_panel_header
   end
 end

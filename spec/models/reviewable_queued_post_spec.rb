@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 RSpec.describe ReviewableQueuedPost, type: :model do
-  fab!(:category) { Fabricate(:category) }
-  fab!(:moderator) { Fabricate(:moderator) }
+  fab!(:category)
+  fab!(:moderator) { Fabricate(:moderator, refresh_auto_groups: true) }
 
   describe "creating a post" do
     let!(:topic) { Fabricate(:topic, category: category) }
@@ -126,6 +126,14 @@ RSpec.describe ReviewableQueuedPost, type: :model do
       end
 
       context "with revise_and_reject_post" do
+        fab!(:contact_group) { Fabricate(:group) }
+        fab!(:contact_user) { Fabricate(:user) }
+
+        before do
+          SiteSetting.site_contact_group_name = contact_group.name
+          SiteSetting.site_contact_username = contact_user.username
+        end
+
         it "doesn't create the post the user intended" do
           post_count = Post.public_posts.count
           result = reviewable.perform(moderator, :revise_and_reject_post)
@@ -156,6 +164,8 @@ RSpec.describe ReviewableQueuedPost, type: :model do
             original_post: reviewable.payload["raw"],
             site_name: SiteSetting.title,
           }
+          expect(topic.topic_allowed_users.pluck(:user_id)).to include(contact_user.id)
+          expect(topic.topic_allowed_groups.pluck(:group_id)).to include(contact_group.id)
           expect(topic.first_post.raw.chomp).to eq(
             I18n.t(
               "system_messages.reviewable_queued_post_revise_and_reject.text_body_template",
@@ -175,8 +185,44 @@ RSpec.describe ReviewableQueuedPost, type: :model do
           }
           topic = Topic.where(archetype: Archetype.private_message).last
 
+          expect(topic.topic_allowed_users.pluck(:user_id)).to include(contact_user.id)
+          expect(topic.topic_allowed_groups.pluck(:group_id)).to include(contact_group.id)
           expect(topic.first_post.raw).not_to include("Other...")
           expect(topic.first_post.raw).to include("Boring")
+        end
+
+        context "when the topic is nil in the case of a new topic being created" do
+          let(:reviewable) { Fabricate(:reviewable_queued_post_topic) }
+
+          it "works" do
+            args = { revise_reason: "Duplicate", revise_feedback: "This is old news" }
+            expect { reviewable.perform(moderator, :revise_and_reject_post, args) }.to change {
+              Topic.where(archetype: Archetype.private_message).count
+            }
+            topic = Topic.where(archetype: Archetype.private_message).last
+
+            expect(topic.title).to eq(
+              I18n.t(
+                "system_messages.reviewable_queued_post_revise_and_reject_new_topic.subject_template",
+                topic_title: reviewable.payload["title"],
+              ),
+            )
+            translation_params = {
+              username: reviewable.target_created_by.username,
+              topic_title: reviewable.payload["title"],
+              topic_url: nil,
+              reason: args[:revise_reason],
+              feedback: args[:revise_feedback],
+              original_post: reviewable.payload["raw"],
+              site_name: SiteSetting.title,
+            }
+            expect(topic.first_post.raw.chomp).to eq(
+              I18n.t(
+                "system_messages.reviewable_queued_post_revise_and_reject_new_topic.text_body_template",
+                translation_params,
+              ).chomp,
+            )
+          end
         end
       end
 
@@ -204,8 +250,8 @@ RSpec.describe ReviewableQueuedPost, type: :model do
 
     before do
       SiteSetting.tagging_enabled = true
-      SiteSetting.min_trust_to_create_tag = 0
-      SiteSetting.min_trust_level_to_tag_topics = 0
+      SiteSetting.create_tag_allowed_groups = Group::AUTO_GROUPS[:trust_level_0]
+      SiteSetting.tag_topic_allowed_groups = Group::AUTO_GROUPS[:trust_level_0]
     end
 
     context "when editing" do

@@ -2,7 +2,7 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import didUpdate from "@ember/render-modifiers/modifiers/did-update";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
 import { resolveAllShortUrls } from "pretty-text/upload-short-url";
 import { ajax } from "discourse/lib/ajax";
 import { loadOneboxes } from "discourse/lib/load-oneboxes";
@@ -52,7 +52,6 @@ export default class CookText extends Component {
   }
 
   <template>
-    {{! template-lint-disable modifier-name-case }}
     <div
       ...attributes
       {{didUpdate this.buildOneboxes this.cooked}}

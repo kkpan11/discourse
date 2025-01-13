@@ -5,15 +5,22 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
     ReviewableFlaggedPost.default_visible.pending.count
   end
 
-  fab!(:user) { Fabricate(:user) }
-  fab!(:post) { Fabricate(:post) }
-  fab!(:moderator) { Fabricate(:moderator) }
+  fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
+  fab!(:post)
+  fab!(:moderator) { Fabricate(:moderator, refresh_auto_groups: true) }
 
   it "sets `potential_spam` when a spam flag is added" do
     reviewable = PostActionCreator.off_topic(user, post).reviewable
     expect(reviewable.potential_spam?).to eq(false)
-    PostActionCreator.spam(Fabricate(:user), post)
+    PostActionCreator.spam(Fabricate(:user, refresh_auto_groups: true), post)
     expect(reviewable.reload.potential_spam?).to eq(true)
+  end
+
+  it "sets `potentially_illegal` when an illegal flag is added" do
+    reviewable = PostActionCreator.off_topic(user, post).reviewable
+    expect(reviewable.potentially_illegal?).to eq(false)
+    PostActionCreator.illegal(Fabricate(:user, refresh_auto_groups: true), post)
+    expect(reviewable.reload.potentially_illegal?).to eq(true)
   end
 
   describe "actions" do
@@ -27,6 +34,7 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
         actions = reviewable.actions_for(guardian)
         expect(actions.has?(:agree_and_hide)).to eq(true)
         expect(actions.has?(:agree_and_keep)).to eq(true)
+        expect(actions.has?(:agree_and_edit)).to eq(true)
         expect(actions.has?(:agree_and_keep_hidden)).to eq(false)
         expect(actions.has?(:agree_and_silence)).to eq(true)
         expect(actions.has?(:agree_and_suspend)).to eq(true)
@@ -56,6 +64,7 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
         post.hidden = true
         actions = reviewable.actions_for(guardian)
         expect(actions.has?(:agree_and_keep)).to eq(false)
+        expect(actions.has?(:agree_and_edit)).to eq(false)
         expect(actions.has?(:agree_and_keep_hidden)).to eq(true)
       end
 
@@ -81,8 +90,19 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
         expect(reviewable.actions_for(guardian).has?(:agree_and_suspend)).to eq(false)
       end
 
+      it "doesn't end up with an empty ignore bundle when the post is already hidden and deleted" do
+        post.update!(hidden: true)
+        post.topic.trash!
+        post.trash!
+        expect(reviewable.actions_for(guardian).has?(:ignore_and_do_nothing)).to eq(false)
+        expect(reviewable.actions_for(guardian).has?(:delete_and_ignore)).to eq(false)
+        expect(
+          reviewable.actions_for(guardian).bundles.find { |bundle| bundle.id.include?("-ignore") },
+        ).to be_blank
+      end
+
       context "when flagged as potential_spam" do
-        before { reviewable.update!(potential_spam: true) }
+        before { reviewable.update!(potential_spam: true, potentially_illegal: false) }
 
         it "excludes delete action if the reviewer cannot delete the user" do
           post.user.user_stat.update!(
@@ -99,9 +119,50 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
           expect(reviewable.actions_for(guardian).has?(:delete_user_block)).to be true
         end
       end
+
+      context "when flagged as illegal" do
+        before { reviewable.update(potential_spam: false, potentially_illegal: true) }
+
+        it "excludes delete action if the reviewer cannot delete the user" do
+          post.user.user_stat.update!(
+            first_post_created_at: 1.year.ago,
+            post_count: User::MAX_STAFF_DELETE_POST_COUNT + 1,
+          )
+
+          expect(reviewable.actions_for(guardian).has?(:delete_user)).to be false
+          expect(reviewable.actions_for(guardian).has?(:delete_user_block)).to be false
+        end
+
+        it "includes delete actions if the reviewer can delete the user" do
+          expect(reviewable.actions_for(guardian).has?(:delete_user)).to be true
+          expect(reviewable.actions_for(guardian).has?(:delete_user_block)).to be true
+        end
+      end
+
+      context "for ignore_and_do_nothing" do
+        it "does not return `ignore_and_do_nothing` when post is hidden" do
+          post.update(hidden: true)
+
+          expect(reviewable.actions_for(guardian).has?(:ignore_and_do_nothing)).to eq(false)
+        end
+
+        it "returns `ignore_and_do_nothing` if the acting user is system" do
+          post.update(hidden: true)
+          system_guardian = Guardian.new(Discourse.system_user)
+
+          expect(reviewable.actions_for(system_guardian).has?(:ignore_and_do_nothing)).to eq(true)
+        end
+      end
     end
 
     it "agree_and_keep agrees with the flags and keeps the post" do
+      reviewable.perform(moderator, :agree_and_keep)
+      expect(reviewable).to be_approved
+      expect(score.reload).to be_agreed
+      expect(post).not_to be_hidden
+    end
+
+    it "agree_and_keep agrees with the flags and edits the post" do
       reviewable.perform(moderator, :agree_and_keep)
       expect(reviewable).to be_approved
       expect(score.reload).to be_agreed

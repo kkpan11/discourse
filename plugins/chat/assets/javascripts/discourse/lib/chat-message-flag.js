@@ -1,9 +1,16 @@
-import { ajax } from "discourse/lib/ajax";
+import { setOwner } from "@ember/owner";
+import { service } from "@ember/service";
 import { popupAjaxError } from "discourse/lib/ajax-error";
-import getURL from "discourse-common/lib/get-url";
-import I18n from "I18n";
+import getURL from "discourse/lib/get-url";
+import { i18n } from "discourse-i18n";
 
 export default class ChatMessageFlag {
+  @service chatApi;
+
+  constructor(owner) {
+    setOwner(this, owner);
+  }
+
   title() {
     return "flagging.title";
   }
@@ -28,7 +35,10 @@ export default class ChatMessageFlag {
     return flags.map((flag) => {
       flag.set(
         "description",
-        I18n.t(`chat.flags.${flag.name_key}`, { basePath: getURL("") })
+        i18n(`chat.flags.${flag.name_key}`, {
+          basePath: getURL(""),
+          defaultValue: flag.description,
+        })
       );
       return flag;
     });
@@ -38,8 +48,9 @@ export default class ChatMessageFlag {
     let flagsAvailable = flagModal.site.flagTypes;
 
     flagsAvailable = flagsAvailable.filter((flag) => {
-      return flagModal.args.model.flagModel.availableFlags.includes(
-        flag.name_key
+      return (
+        flagModal.args.model.flagModel.availableFlags.includes(flag.name_key) &&
+        flag.applies_to.includes("Chat::Message")
       );
     });
 
@@ -57,19 +68,22 @@ export default class ChatMessageFlag {
     return this._rewriteFlagDescriptions(flagsAvailable);
   }
 
-  create(flagModal, opts) {
+  async create(flagModal, opts) {
     flagModal.args.closeModal();
 
-    return ajax("/chat/flag", {
-      method: "PUT",
-      data: {
-        chat_message_id: flagModal.args.model.flagModel.id,
+    const channelId = flagModal.args.model.flagModel.channel.id;
+    const messageId = flagModal.args.model.flagModel.id;
+
+    try {
+      await this.chatApi.flagMessage(channelId, messageId, {
         flag_type_id: flagModal.selected.id,
         message: opts.message,
         is_warning: opts.isWarning,
         take_action: opts.takeAction,
         queue_for_review: opts.queue_for_review,
-      },
-    }).catch((error) => popupAjaxError(error));
+      });
+    } catch (error) {
+      popupAjaxError(error);
+    }
   }
 }

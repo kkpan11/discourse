@@ -94,6 +94,12 @@
       font-weight: bold;
       margin-right: 1em;
     }
+    .value {
+      max-width: calc(
+        100% - 8em - 1em
+      ); // subtracting width of name and margin-right
+      word-wrap: break-word;
+    }
     margin-bottom: 0.5em;
   }
 }
@@ -135,11 +141,10 @@
   }
 }
 
-.reviewable-actions .claimed-actions {
+.claimed-actions {
   display: flex;
   flex: 1 1 100%;
   margin-right: 0;
-  justify-content: space-between;
   align-items: center;
   margin-bottom: 0.5em;
 }
@@ -298,6 +303,13 @@
 
 .reviewable-stale {
   opacity: 0.7;
+}
+
+.reviewable-deleted {
+  .reviewable-contents .post-contents .post-body {
+    background-color: var(--danger-low-mid);
+    padding: 0.5em;
+  }
 }
 
 .blur-images {
@@ -544,6 +556,13 @@
       font-size: var(--font-up-2);
       margin-right: 0.75em;
     }
+    .badge-category__wrapper {
+      margin-left: 0.25em;
+    }
+    .discourse-tag {
+      vertical-align: bottom;
+      padding-left: 0.1em;
+    }
   }
 
   &__context-question {
@@ -577,8 +596,4 @@
     }
     margin-bottom: 0.5em;
   }
-}
-
-.flag-modal .modal-inner-container .select-kit.reviewable-action-dropdown {
-  width: initial;
 }

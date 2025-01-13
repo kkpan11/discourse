@@ -23,7 +23,12 @@ export async function processHTML({ container, selector, clickTarget }) {
         item.parentElement?.style?.backgroundImage ||
         null;
 
-      const _fullsizeURL = item.href || item.src || innerImage.src || null;
+      const _fullsizeURL =
+        item.dataset?.largeSrc ||
+        item.href ||
+        item.src ||
+        innerImage.src ||
+        null;
 
       const _smallURL =
         innerImage.currentSrc ||
@@ -54,7 +59,10 @@ export async function processHTML({ container, selector, clickTarget }) {
           .querySelector(SELECTORS.FILE_DETAILS_CONTAINER)
           ?.innerText.trim() || null;
 
-      const _dominantColor = innerImage.dataset?.dominantColor || null;
+      const _dominantColor =
+        item.dataset?.dominantColor ??
+        innerImage.dataset?.dominantColor ??
+        null;
 
       const _cssVars = [
         _dominantColor && `--dominant-color: #${_dominantColor};`,

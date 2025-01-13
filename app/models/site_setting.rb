@@ -1,6 +1,20 @@
 # frozen_string_literal: true
 
 class SiteSetting < ActiveRecord::Base
+  VALID_AREAS = %w[
+    about
+    embedding
+    emojis
+    flags
+    fonts
+    group_permissions
+    legal
+    navigation
+    notifications
+    permalinks
+    trust_levels
+  ]
+
   extend GlobalPath
   extend SiteSettingExtension
 
@@ -70,7 +84,7 @@ class SiteSetting < ActiveRecord::Base
   end
 
   def self.top_menu_items
-    top_menu.split("|").map { |menu_item| TopMenuItem.new(menu_item) }
+    top_menu_map.map { |menu_item| TopMenuItem.new(menu_item) }
   end
 
   def self.homepage
@@ -104,14 +118,6 @@ class SiteSetting < ActiveRecord::Base
 
   def self.min_redirected_to_top_period(duration)
     ListController.best_period_with_topics_for(duration)
-  end
-
-  def self.queue_jobs=(val)
-    Discourse.deprecate(
-      "queue_jobs is deprecated. Please use Jobs.run_immediately! instead",
-      drop_from: "2.9.0",
-    )
-    val ? Jobs.run_later! : Jobs.run_immediately!
   end
 
   def self.email_polling_enabled?
@@ -166,6 +172,20 @@ class SiteSetting < ActiveRecord::Base
       SiteSetting.enable_s3_uploads ? SiteSetting.s3_endpoint : GlobalSetting.s3_endpoint
     end
 
+    def self.enable_s3_transfer_acceleration
+      if SiteSetting.enable_s3_uploads
+        SiteSetting.enable_s3_transfer_acceleration
+      else
+        GlobalSetting.enable_s3_transfer_acceleration
+      end
+    end
+
+    def self.use_dualstack_endpoint
+      return false if !SiteSetting.Upload.enable_s3_uploads
+      return false if SiteSetting.Upload.s3_endpoint.present?
+      !SiteSetting.Upload.s3_region.start_with?("cn-")
+    end
+
     def self.enable_s3_uploads
       SiteSetting.enable_s3_uploads || GlobalSetting.use_s3?
     end
@@ -188,10 +208,10 @@ class SiteSetting < ActiveRecord::Base
 
       # cf. http://docs.aws.amazon.com/general/latest/gr/rande.html#s3_region
       if SiteSetting.s3_endpoint.blank? || SiteSetting.s3_endpoint.end_with?("amazonaws.com")
-        if SiteSetting.Upload.s3_region.start_with?("cn-")
-          "//#{bucket}.s3.#{SiteSetting.Upload.s3_region}.amazonaws.com.cn"
-        else
+        if SiteSetting.Upload.use_dualstack_endpoint
           "//#{bucket}.s3.dualstack.#{SiteSetting.Upload.s3_region}.amazonaws.com"
+        else
+          "//#{bucket}.s3.#{SiteSetting.Upload.s3_region}.amazonaws.com.cn"
         end
       else
         "//#{bucket}.#{url_basename}"
@@ -201,14 +221,6 @@ class SiteSetting < ActiveRecord::Base
 
   def self.Upload
     SiteSetting::Upload
-  end
-
-  def self.whispers_allowed_group_ids
-    if SiteSetting.whispers_allowed_groups.present?
-      SiteSetting.whispers_allowed_groups_map
-    else
-      []
-    end
   end
 
   def self.require_invite_code

@@ -1,4 +1,4 @@
-[data-content][data-identifier="card"] {
+[data-content][data-identifier="usercard"] {
   z-index: z("max");
 }
 
@@ -13,7 +13,7 @@
   .first-row {
     flex-wrap: wrap;
     .names {
-      flex: 1 1 auto;
+      flex: 1 1 0;
       box-sizing: border-box;
     }
     .user-card-avatar {
@@ -21,34 +21,35 @@
     }
     .usercard-controls {
       width: 100%; // always wraps to next line
-      --usercard-control-margin: 0.25em;
       display: flex;
       flex-wrap: wrap;
-      margin: 1em calc(var(--usercard-control-margin) * -1) 0;
+      margin-top: 1em;
+      gap: 0.5em;
       li {
-        flex: 1 0 calc(50% - (var(--usercard-control-margin) * 2));
-        min-width: 0;
-        margin: 0 var(--usercard-control-margin);
+        flex: 1 0 45%;
+        min-width: 8em;
         &:empty {
           display: none;
         }
         button {
-          @include ellipsis;
-          margin-bottom: calc(var(--usercard-control-margin) * 2);
+          margin: 0;
+          .d-button-label {
+            @include ellipsis;
+          }
         }
       }
     }
   }
-  h1 {
+  .names__primary {
     font-size: var(--font-up-3);
     .d-icon {
       font-size: var(--font-down-2);
     }
   }
-  h2 {
+  .names__secondary {
     font-size: var(--font-0);
   }
-  h3 {
+  .user-status {
     font-size: var(--font-down-1);
   }
 }

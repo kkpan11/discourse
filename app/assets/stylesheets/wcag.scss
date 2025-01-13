@@ -12,12 +12,9 @@
 }
 
 html.discourse-no-touch {
-  .btn-default:not(.btn-flat, .btn-danger, .btn-primary),
-  .btn-icon:not(.btn-flat, .btn-danger, .btn-primary) {
-    &.btn-default {
-      .d-icon {
-        color: var(--primary-medium);
-      }
+  .btn-default {
+    .d-icon {
+      color: var(--primary-medium);
     }
     &:hover,
     &.btn-hover,
@@ -32,12 +29,13 @@ html.discourse-no-touch {
   }
   .btn-icon.ok,
   .btn-icon.cancel,
-  .btn-danger:not(.btn-flat) {
+  .btn-danger:not(.btn-flat, .btn-transparent) {
     .d-icon {
       color: var(--secondary);
     }
   }
-  .btn-flat.delete.d-hover {
+  .btn-flat.delete.d-hover,
+  .btn-flat.delete:hover {
     background: var(--danger);
   }
 
@@ -95,7 +93,8 @@ html {
     }
   }
 
-  .d-header-icons .d-icon {
+  .d-header-icons .d-icon,
+  .header-sidebar-toggle button .d-icon {
     color: var(--primary-low-mid);
   }
 
@@ -173,10 +172,6 @@ html {
     }
   }
 
-  .topic-map h4 {
-    color: var(--primary);
-  }
-
   .quote-controls,
   .quote-controls .d-icon {
     color: var(--primary-medium);
@@ -201,17 +196,14 @@ html {
     color: var(--primary-medium);
   }
 
-  .badge-notification.clicks {
+  a[data-clicks]::before,
+  a[data-clicks]::after {
     color: var(--primary-high);
-  }
-
-  .topic-map {
-    background: transparent;
   }
 
   // Post controls
 
-  .topic-admin-menu-button-container,
+  .topic-admin-menu,
   .timeline-controls {
     .btn .d-icon {
       // admin wrenches
@@ -227,6 +219,7 @@ html {
       }
       button {
         &.d-hover,
+        &:hover,
         &:focus,
         &:active {
           background: var(--primary-medium);
@@ -250,7 +243,8 @@ html {
             .d-icon {
               color: var(--tertiary);
             }
-            &.d-hover {
+            &.d-hover,
+            &:hover {
               .d-icon {
                 color: var(--tertiary-medium);
               }
@@ -411,11 +405,6 @@ html {
 
   .reviewable .status span.approved {
     color: var(--success-hover);
-  }
-
-  // Chat
-  .chat-channel .open-drawer-btn {
-    color: var(--primary-medium);
   }
 }
 

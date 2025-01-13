@@ -3,7 +3,7 @@
 RSpec.describe Chat::Action::PublishAndFollowDirectMessageChannel do
   subject(:action) { described_class.call(channel_membership: membership) }
 
-  fab!(:user) { Fabricate(:user) }
+  fab!(:user)
 
   let(:membership) { user.user_chat_channel_memberships.last }
 
@@ -41,12 +41,11 @@ RSpec.describe Chat::Action::PublishAndFollowDirectMessageChannel do
     end
 
     context "when at least one user allows communication" do
-      let(:users) { channel.user_chat_channel_memberships.map(&:user) }
-
       before { channel.user_chat_channel_memberships.update_all(following: false) }
 
       it "publishes the channel" do
-        Chat::Publisher.expects(:publish_new_channel).with(channel, includes(*users))
+        user_ids = channel.user_chat_channel_memberships.map(&:user_id)
+        Chat::Publisher.expects(:publish_new_channel).with(channel, includes(*user_ids))
         action
       end
 

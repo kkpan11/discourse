@@ -10,7 +10,7 @@ module Jobs
     attr_accessor :current_user
     attr_accessor :entity
 
-    HEADER_ATTRS_FOR ||=
+    HEADER_ATTRS_FOR =
       HashWithIndifferentAccess.new(
         user_list: %w[
           id
@@ -103,7 +103,9 @@ module Jobs
           if upload.persisted?
             user_export.update_columns(upload_id: upload.id)
           else
-            Rails.logger.warn("Failed to upload the file #{zip_filename}")
+            Rails.logger.warn(
+              "Failed to upload the file #{zip_filename}: #{upload.errors.full_messages}",
+            )
           end
         end
 
@@ -431,7 +433,7 @@ module Jobs
 
       if @current_user
         post =
-          if upload
+          if upload&.errors&.empty?
             SystemMessage.create_from_system_user(
               @current_user,
               :csv_export_succeeded,

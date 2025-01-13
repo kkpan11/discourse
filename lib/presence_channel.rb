@@ -5,10 +5,13 @@
 class PresenceChannel
   class NotFound < StandardError
   end
+
   class InvalidAccess < StandardError
   end
+
   class ConfigNotLoaded < StandardError
   end
+
   class InvalidConfig < StandardError
   end
 
@@ -39,7 +42,7 @@ class PresenceChannel
   #   allowed_group_ids: array of group_ids that can view, and become present in, the channel (default [])
   #   count_only: boolean. If true, user identities are never revealed to clients. (default [])
   class Config
-    NOT_FOUND ||= "notfound"
+    NOT_FOUND = "notfound"
 
     attr_accessor :public, :allowed_user_ids, :allowed_group_ids, :count_only, :timeout
 
@@ -73,11 +76,11 @@ class PresenceChannel
     end
   end
 
-  DEFAULT_TIMEOUT ||= 60
-  CONFIG_CACHE_SECONDS ||= 10
-  GC_SECONDS ||= 24.hours.to_i
-  MUTEX_TIMEOUT_SECONDS ||= 10
-  MUTEX_LOCKED_ERROR ||= "PresenceChannel mutex is locked"
+  DEFAULT_TIMEOUT = 60
+  CONFIG_CACHE_SECONDS = 10
+  GC_SECONDS = 24.hours.to_i
+  MUTEX_TIMEOUT_SECONDS = 10
+  MUTEX_LOCKED_ERROR = "PresenceChannel mutex is locked"
 
   @@configuration_blocks ||= {}
 
@@ -112,7 +115,7 @@ class PresenceChannel
   end
 
   # Is a user allowed to enter this channel?
-  # Currently equal to the the can_view? permission
+  # Currently equal to the can_view? permission
   def can_enter?(user_id: nil, group_ids: nil)
     return false if user_id.nil?
     can_view?(user_id: user_id, group_ids: group_ids)
@@ -333,7 +336,7 @@ class PresenceChannel
     else
       message["leaving_user_ids"] = leaving_user_ids if leaving_user_ids.present?
       if entering_user_ids.present?
-        users = User.where(id: entering_user_ids)
+        users = User.where(id: entering_user_ids).includes(:user_option)
         message["entering_users"] = ActiveModel::ArraySerializer.new(
           users,
           each_serializer: BasicUserSerializer,
@@ -466,7 +469,7 @@ class PresenceChannel
     end
   LUA
 
-  LUA_SCRIPTS ||= {}
+  LUA_SCRIPTS = {}
 
   LUA_SCRIPTS[:present] = DiscourseRedis::EvalHelper.new <<~LUA
     #{COMMON_PRESENT_LEAVE_LUA}
@@ -516,7 +519,7 @@ class PresenceChannel
       #{UPDATE_GLOBAL_CHANNELS_LUA}
 
       -- Update the user session count in the channel hash
-      local val = redis.call('HINCRBY', hash_key, user_id, -1)
+      local val = redis.call('HINCRBY', hash_key, user_id, #{Discourse::SYSTEM_USER_ID})
       if val <= 0 then
         redis.call('HDEL', hash_key, user_id)
         removed_users = 1
@@ -607,7 +610,7 @@ class PresenceChannel
         get_mutex()
       end
 
-      local val = redis.call('HINCRBY', hash_key, user_id, -1)
+      local val = redis.call('HINCRBY', hash_key, user_id, #{Discourse::SYSTEM_USER_ID})
       if val <= 0 then
         table.insert(expired_user_ids, tonumber(user_id))
         redis.call('HDEL', hash_key, user_id)

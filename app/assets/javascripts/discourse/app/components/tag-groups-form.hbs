@@ -50,12 +50,11 @@
 <section class="group-visibility">
   <div class="group-visibility-option">
     <RadioButton
-      @class="tag-permissions-choice"
       @name="tag-permissions-choice"
       @value="public"
       @id="public-permission"
       @selection={{this.buffered.permissionName}}
-      @onChange={{action "setPermissionsType"}}
+      class="tag-permissions-choice"
     />
 
     <label class="radio" for="public-permission">
@@ -64,12 +63,11 @@
   </div>
   <div class="group-visibility-option">
     <RadioButton
-      @class="tag-permissions-choice"
       @name="tag-permissions-choice"
       @value="visible"
       @id="visible-permission"
       @selection={{this.buffered.permissionName}}
-      @onChange={{action "setPermissionsType"}}
+      class="tag-permissions-choice"
     />
 
     <label class="radio" for="visible-permission">
@@ -90,12 +88,11 @@
   </div>
   <div class="group-visibility-option">
     <RadioButton
-      @class="tag-permissions-choice"
       @name="tag-permissions-choice"
       @value="private"
       @id="private-permission"
       @selection={{this.buffered.permissionName}}
-      @onChange={{action "setPermissionsType"}}
+      class="tag-permissions-choice"
     />
 
     <label class="radio" for="private-permission">
@@ -125,9 +122,9 @@
   />
 
   <DButton
-    @action={{action "destroy"}}
+    @action={{this.destroyTagGroup}}
     @disabled={{this.buffered.isNew}}
-    @icon="far-trash-alt"
+    @icon="trash-can"
     @label="tagging.groups.delete"
     class="btn-danger"
   />

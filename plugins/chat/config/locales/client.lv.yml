@@ -13,6 +13,8 @@ lv:
           never: "Nekad"
     chat:
       deleted_chat_username: dzēsts
+      dates:
+        yesterday: "Vakar"
       create: "Izveidot"
       cancel: "Atcelt"
       channel_settings:
@@ -48,6 +50,7 @@ lv:
       browse:
         back: "Atpakaļ"
         filter_all: Viss
+        filter_open: Atvērt
         filter_closed: Slēgts
       chat_message_separator:
         today: Šodien
@@ -61,6 +64,8 @@ lv:
         tabs:
           members: Dalībnieki
           settings: Iestatījumi
+      new_message_modal:
+        filter: "Filtrs"
       direct_message_creator:
         title: Jauns ziņa
         prefix: "Kam:"
@@ -109,11 +114,7 @@ lv:
         existing_topic:
           title: "Pārvietot uz esošu tēmu"
       retention_reminders:
-        public:
-          zero: "%{count} dienas"
-          one: "%{count} diena"
-          other: "%{count} dienas"
-        dm:
+        short:
           zero: "%{count} dienas"
           one: "%{count} diena"
           other: "%{count} dienas"
@@ -135,6 +136,8 @@ lv:
             title: "Normāls"
           tracking:
             title: "Sekot"
+          watching:
+            title: "Novērošana"
       draft_channel_screen:
         header: "Jauns ziņa"
         cancel: "Atcelt"

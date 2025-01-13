@@ -111,16 +111,6 @@ RSpec.describe User do
         SiteSetting.default_other_skip_new_user_tips = true
         expect { user }.to_not change { Post.count }
       end
-
-      it "should delete the existing PM" do
-        user.user_option.skip_new_user_tips = true
-
-        expect { user.user_option.save! }.to change { Topic.count }.by(-1).and not_change {
-                UserHistory.count
-              }.and change { user.unread_high_priority_notifications }.by(-1).and change {
-                            user.notifications.count
-                          }.by(-1)
-      end
     end
 
     context "when user is anonymous?" do
@@ -128,6 +118,7 @@ RSpec.describe User do
 
       it "should initiate bot for real user only" do
         user = Fabricate(:user, trust_level: 1)
+        Group.refresh_automatic_groups!
         shadow = AnonymousShadowCreator.get(user)
 
         expect(TopicAllowedUser.where(user_id: shadow.id).count).to eq(0)

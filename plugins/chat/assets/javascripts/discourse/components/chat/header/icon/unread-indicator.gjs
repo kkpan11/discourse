@@ -1,9 +1,10 @@
 import Component from "@glimmer/component";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
 import {
   HEADER_INDICATOR_PREFERENCE_ALL_NEW,
   HEADER_INDICATOR_PREFERENCE_DM_AND_MENTIONS,
   HEADER_INDICATOR_PREFERENCE_NEVER,
+  HEADER_INDICATOR_PREFERENCE_ONLY_MENTIONS,
 } from "discourse/plugins/chat/discourse/controllers/preferences-chat";
 
 const MAX_UNREAD_COUNT = 99;
@@ -19,10 +20,23 @@ export default class ChatHeaderIconUnreadIndicator extends Component {
     );
   }
 
+  get mentionCount() {
+    return (
+      this.args.mentionCount ||
+      this.chatTrackingStateManager.allChannelMentionCount
+    );
+  }
+
   get unreadCount() {
     return (
       this.args.unreadCount ||
       this.chatTrackingStateManager.publicChannelUnreadCount
+    );
+  }
+
+  get hasUnreads() {
+    return (
+      this.unreadCount > 0 || this.chatTrackingStateManager.hasUnreadThreads
     );
   }
 
@@ -34,6 +48,10 @@ export default class ChatHeaderIconUnreadIndicator extends Component {
   }
 
   get showUrgentIndicator() {
+    if (this.onlyMentions) {
+      return this.mentionCount > 0;
+    }
+
     return (
       this.urgentCount > 0 &&
       this.#hasAnyIndicatorPreference([
@@ -45,15 +63,20 @@ export default class ChatHeaderIconUnreadIndicator extends Component {
 
   get showUnreadIndicator() {
     return (
-      this.unreadCount > 0 &&
+      this.hasUnreads &&
       this.#hasAnyIndicatorPreference([HEADER_INDICATOR_PREFERENCE_ALL_NEW])
     );
   }
 
-  get unreadCountLabel() {
-    return this.urgentCount > MAX_UNREAD_COUNT
-      ? `${MAX_UNREAD_COUNT}+`
-      : this.urgentCount;
+  get urgentCountLabel() {
+    const totalCount = this.onlyMentions ? this.mentionCount : this.urgentCount;
+    return totalCount > MAX_UNREAD_COUNT ? `${MAX_UNREAD_COUNT}+` : totalCount;
+  }
+
+  get onlyMentions() {
+    return this.#hasAnyIndicatorPreference([
+      HEADER_INDICATOR_PREFERENCE_ONLY_MENTIONS,
+    ]);
   }
 
   #hasAnyIndicatorPreference(preferences) {
@@ -71,7 +94,7 @@ export default class ChatHeaderIconUnreadIndicator extends Component {
     {{#if this.showUrgentIndicator}}
       <div class="chat-channel-unread-indicator -urgent">
         <div class="chat-channel-unread-indicator__number">
-          {{this.unreadCountLabel}}
+          {{this.urgentCountLabel}}
         </div>
       </div>
     {{else if this.showUnreadIndicator}}

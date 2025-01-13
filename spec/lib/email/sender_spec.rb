@@ -4,7 +4,7 @@ require "email/sender"
 
 RSpec.describe Email::Sender do
   before { SiteSetting.secure_uploads_allow_embed_images_in_emails = false }
-  fab!(:post) { Fabricate(:post) }
+  fab!(:post)
   let(:mock_smtp_transaction_response) do
     "250 Ok: queued as 2l3Md07BObzB8kRyHZeoN0baSUAhzc7A-NviRioOr80=@mailhog.example"
   end
@@ -14,8 +14,8 @@ RSpec.describe Email::Sender do
   end
 
   context "when disable_emails is enabled" do
-    fab!(:user) { Fabricate(:user) }
-    fab!(:moderator) { Fabricate(:moderator) }
+    fab!(:user)
+    fab!(:moderator)
 
     context "when disable_emails is enabled for everyone" do
       before { SiteSetting.disable_emails = "yes" }
@@ -189,7 +189,7 @@ RSpec.describe Email::Sender do
     end
 
     context "when reply_key is present" do
-      fab!(:user) { Fabricate(:user) }
+      fab!(:user)
       let(:email_sender) { Email::Sender.new(message, :valid_type, user) }
       let(:reply_key) { PostReplyKey.find_by!(post_id: post.id, user_id: user.id).reply_key }
 
@@ -229,7 +229,7 @@ RSpec.describe Email::Sender do
     end
 
     describe "adds Precedence header" do
-      fab!(:topic) { Fabricate(:topic) }
+      fab!(:topic)
       fab!(:post) { Fabricate(:post, topic: topic) }
 
       before do
@@ -253,7 +253,7 @@ RSpec.describe Email::Sender do
     end
 
     describe "email threading" do
-      fab!(:topic) { Fabricate(:topic) }
+      fab!(:topic)
 
       fab!(:post_1) { Fabricate(:post, topic: topic, post_number: 1) }
       fab!(:post_2) { Fabricate(:post, topic: topic, post_number: 2) }
@@ -532,7 +532,7 @@ RSpec.describe Email::Sender do
         Discourse.system_user.id,
       )
     end
-    fab!(:post) { Fabricate(:post) }
+    fab!(:post)
     fab!(:reply) do
       raw = <<~RAW
         Hello world! It’s a great day!
@@ -541,7 +541,13 @@ RSpec.describe Email::Sender do
         #{UploadMarkdown.new(image).image_markdown}
         #{UploadMarkdown.new(csv_file).attachment_markdown}
       RAW
-      reply = Fabricate(:post, raw: raw, topic: post.topic, user: Fabricate(:user))
+      reply =
+        Fabricate(
+          :post,
+          raw: raw,
+          topic: post.topic,
+          user: Fabricate(:user, refresh_auto_groups: true),
+        )
       reply.link_post_uploads
       reply
     end
@@ -553,6 +559,20 @@ RSpec.describe Email::Sender do
         notification_type: notification.notification_type,
         notification_data_hash: notification.data_hash,
       )
+    end
+
+    context "with a plugin" do
+      before { DiscoursePluginRegistry.clear_modifiers! }
+      after { DiscoursePluginRegistry.clear_modifiers! }
+
+      it "allows plugins to control whether attachments are included" do
+        SiteSetting.email_total_attachment_size_limit_kb = 10_000
+
+        Plugin::Instance.new.register_modifier(:should_add_email_attachments) { false }
+
+        Email::Sender.new(message, :valid_type).send
+        expect(message.attachments.size).to eq(0)
+      end
     end
 
     it "adds only non-image uploads as attachments to the email" do
@@ -571,7 +591,7 @@ RSpec.describe Email::Sender do
       reply.rebake!
       Email::Sender.new(message, :valid_type).send
       expected = <<~HTML
-      <a href=\"#{Discourse.base_url}#{category.url}\" data-type=\"category\" data-slug=\"dev\" data-id=\"#{category.id}\" style=\"text-decoration: none; font-weight: bold; color: #006699;\"><span>#dev</span>
+      <a href=\"#{Discourse.base_url}#{category.url}\" data-type=\"category\" data-slug=\"dev\" data-id=\"#{category.id}\" style=\"text-decoration:none;font-weight:bold;color:#006699\"><span>#dev</span>
       HTML
       expect(message.html_part.body.to_s).to include(expected.chomp)
     end
@@ -587,16 +607,20 @@ RSpec.describe Email::Sender do
         SiteSetting.secure_uploads_max_email_embed_image_size_kb = 5_000
 
         Jobs.run_immediately!
-        Jobs::PullHotlinkedImages.any_instance.expects(:execute)
+        Jobs::PullHotlinkedImages.any_instance.expects(:execute).at_least_once
         FileStore::S3Store.any_instance.expects(:has_been_uploaded?).returns(true).at_least_once
         CookedPostProcessor.any_instance.stubs(:get_size).returns([244, 66])
 
         @secure_image_file = file_from_fixtures("logo.png", "images")
         @secure_image =
-          UploadCreator.new(@secure_image_file, "logo.png").create_for(Discourse.system_user.id)
+          UploadCreator.new(@secure_image_file, "secure_logo.png").create_for(
+            Discourse.system_user.id,
+          )
         @secure_image.update_secure_status(override: true)
         @secure_image.update(access_control_post_id: reply.id)
-        reply.update(raw: reply.raw + "\n" + "#{UploadMarkdown.new(@secure_image).image_markdown}")
+        reply.update!(raw: reply.raw + "\n" + "#{UploadMarkdown.new(@secure_image).image_markdown}")
+        reply.uploads << @secure_image
+        reply.save
         reply.rebake!
       end
 
@@ -610,9 +634,10 @@ RSpec.describe Email::Sender do
 
         it "can inline images with duplicate names" do
           @secure_image_2 =
-            UploadCreator.new(file_from_fixtures("logo-dev.png", "images"), "logo.png").create_for(
-              Discourse.system_user.id,
-            )
+            UploadCreator.new(
+              file_from_fixtures("logo-dev.png", "images"),
+              "secure_logo_2.png",
+            ).create_for(Discourse.system_user.id)
           @secure_image_2.update_secure_status(override: true)
           @secure_image_2.update(access_control_post_id: reply.id)
 
@@ -629,7 +654,68 @@ RSpec.describe Email::Sender do
           expect(message.to_s.scan(/cid:[\w\-@.]+/).uniq.length).to eq(2)
         end
 
-        it "does not attach images that are not marked as secure" do
+        it "attaches allowed images from multiple posts in the activity summary" do
+          digest_post = Fabricate(:post)
+          other_digest_post = Fabricate(:post)
+
+          Topic.stubs(:for_digest).returns(
+            Topic.where(id: [digest_post.topic_id, other_digest_post.topic_id]),
+          )
+
+          summary = UserNotifications.digest(post.user, since: 24.hours.ago)
+
+          @secure_image_2 =
+            UploadCreator.new(
+              file_from_fixtures("logo.png", "images"),
+              "something-cool.png",
+            ).create_for(Discourse.system_user.id)
+          @secure_image_2.update_secure_status(override: true)
+          @secure_image_2.update(access_control_post_id: digest_post.id)
+
+          @secure_image_3 =
+            UploadCreator.new(
+              file_from_fixtures("logo.png", "images"),
+              "something-cooler.png",
+            ).create_for(Discourse.system_user.id)
+          @secure_image_3.update_secure_status(override: true)
+          @secure_image_3.update(access_control_post_id: other_digest_post.id)
+
+          Jobs::PullHotlinkedImages.any_instance.expects(:execute)
+          digest_post.update(
+            raw:
+              "#{UploadMarkdown.new(@secure_image).image_markdown}\n#{UploadMarkdown.new(@secure_image_2).image_markdown}",
+          )
+          digest_post.rebake!
+
+          other_digest_post.update(raw: "#{UploadMarkdown.new(@secure_image_3).image_markdown}")
+          other_digest_post.rebake!
+
+          summary.header["X-Discourse-Post-Id"] = nil
+          summary.header["X-Discourse-Post-Ids"] = "#{digest_post.id},#{other_digest_post.id}"
+
+          Email::Sender.new(summary, "digest").send
+
+          expect(summary.content_type).to eq(
+            "multipart/mixed; boundary=\"#{summary.body.boundary}\"",
+          )
+          expect(summary.attachments.map(&:filename)).to include(
+            *[@secure_image, @secure_image_2, @secure_image_3].map(&:original_filename),
+          )
+          expect(summary.attachments.size).to eq(3)
+          expect(summary.to_s.scan("Content-Type: text/html;").length).to eq(1)
+          expect(summary.to_s.scan("Content-Type: text/plain;").length).to eq(1)
+          expect(summary.to_s.scan(/cid:[\w\-@.]+/).length).to eq(3)
+          expect(summary.to_s.scan(/cid:[\w\-@.]+/).uniq.length).to eq(3)
+        end
+
+        it "does not attach images that are not marked as secure, in the case of a non-secure upload copied to a PM" do
+          SiteSetting.login_required = false
+          @secure_image.update_secure_status(override: false)
+          @secure_image.update!(access_control_post: Fabricate(:post))
+          pm_topic = Fabricate(:private_message_topic)
+          Fabricate(:post, topic: pm_topic)
+          reply.update(topic: pm_topic)
+          reply.rebake!
           Email::Sender.new(message, :valid_type).send
           expect(message.attachments.length).to eq(4)
         end
@@ -642,16 +728,24 @@ RSpec.describe Email::Sender do
 
         it "uses the email styles to inline secure images and attaches the secure image upload to the email" do
           Email::Sender.new(message, :valid_type).send
-          expect(message.attachments.length).to eq(4)
+          expect(message.attachments.length).to eq(5)
           expect(message.attachments.map(&:filename)).to contain_exactly(
-            *[small_pdf, large_pdf, csv_file, @secure_image].map(&:original_filename),
+            *[small_pdf, large_pdf, csv_file, image, @secure_image].map(&:original_filename),
           )
           expect(message.attachments["logo.png"].body.raw_source.force_encoding("UTF-8")).to eq(
             File.read(@secure_image_file),
           )
           expect(message.html_part.body).to include("cid:")
           expect(message.html_part.body).to include("embedded-secure-image")
-          expect(message.attachments.length).to eq(4)
+        end
+
+        it "embeds an image with a secure URL that has an upload that is not secure" do
+          @secure_image.update_secure_status(override: false)
+          Email::Sender.new(message, :valid_type).send
+          expect(message.attachments.length).to eq(5)
+          expect(message.attachments["logo.png"].body.raw_source.force_encoding("UTF-8")).to eq(
+            File.read(@secure_image_file),
+          )
         end
 
         it "uses correct UTF-8 encoding for the body of the email" do
@@ -673,13 +767,13 @@ RSpec.describe Email::Sender do
 
           it "uses the email styles and the optimized image to inline secure images and attaches the secure image upload to the email" do
             Email::Sender.new(message, :valid_type).send
-            expect(message.attachments.length).to eq(4)
+            expect(message.attachments.length).to eq(5)
             expect(message.attachments.map(&:filename)).to contain_exactly(
-              *[small_pdf, large_pdf, csv_file, @secure_image].map(&:original_filename),
+              *[small_pdf, large_pdf, csv_file, image, @secure_image].map(&:original_filename),
             )
-            expect(message.attachments["logo.png"].body.raw_source.force_encoding("UTF-8")).to eq(
-              File.read(optimized_image_file),
-            )
+            expect(
+              message.attachments["secure_logo.png"].body.raw_source.force_encoding("UTF-8"),
+            ).to eq(File.read(optimized_image_file))
             expect(message.html_part.body).to include("cid:")
             expect(message.html_part.body).to include("embedded-secure-image")
           end
@@ -688,9 +782,9 @@ RSpec.describe Email::Sender do
             SiteSetting.email_total_attachment_size_limit_kb = 45
             Email::Sender.new(message, :valid_type).send
             expect(message.attachments.length).to eq(4)
-            expect(message.attachments["logo.png"].body.raw_source.force_encoding("UTF-8")).to eq(
-              File.read(optimized_image_file),
-            )
+            expect(
+              message.attachments["secure_logo.png"].body.raw_source.force_encoding("UTF-8"),
+            ).to eq(File.read(optimized_image_file))
           end
         end
       end
@@ -776,7 +870,7 @@ RSpec.describe Email::Sender do
       message
     end
 
-    fab!(:user) { Fabricate(:user) }
+    fab!(:user)
     let(:email_sender) { Email::Sender.new(message, :valid_type, user) }
 
     before do
@@ -793,7 +887,7 @@ RSpec.describe Email::Sender do
     end
 
     describe "post reply keys" do
-      fab!(:post) { Fabricate(:post) }
+      fab!(:post)
 
       before do
         message.header["X-Discourse-Post-Id"] = post.id
@@ -845,7 +939,7 @@ RSpec.describe Email::Sender do
       message
     end
 
-    fab!(:user) { Fabricate(:user) }
+    fab!(:user)
     let(:email_sender) { Email::Sender.new(message, :valid_type, user) }
 
     it "logs the cc addresses in the email log (but not users if they do not match the emails)" do

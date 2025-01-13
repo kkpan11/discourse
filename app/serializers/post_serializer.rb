@@ -2,7 +2,7 @@
 
 class PostSerializer < BasicPostSerializer
   # To pass in additional information we might need
-  INSTANCE_VARS ||= %i[
+  INSTANCE_VARS = %i[
     parent_post
     add_raw
     add_title
@@ -38,6 +38,7 @@ class PostSerializer < BasicPostSerializer
              :flair_bg_color,
              :flair_color,
              :flair_group_id,
+             :badges_granted,
              :version,
              :can_edit,
              :can_delete,
@@ -223,6 +224,18 @@ class PostSerializer < BasicPostSerializer
     object.user&.flair_group_id
   end
 
+  def badges_granted
+    return [] unless SiteSetting.enable_badges && SiteSetting.show_badges_in_post_header
+
+    if @topic_view
+      user_badges = @topic_view.post_user_badges[object.id] || []
+    else
+      user_badges = UserBadge.for_post_header_badges([object])
+    end
+
+    user_badges.map { |user_badge| BasicUserBadgeSerializer.new(user_badge, scope: scope).as_json }
+  end
+
   def link_counts
     return @single_post_link_counts if @single_post_link_counts.present?
 
@@ -290,7 +303,12 @@ class PostSerializer < BasicPostSerializer
     result = []
     can_see_post = scope.can_see_post?(object)
 
-    PostActionType.types.each do |sym, id|
+    @post_action_type_view =
+      @topic_view ? @topic_view.post_action_type_view : PostActionTypeView.new
+
+    public_flag_types = @post_action_type_view.public_types
+
+    @post_action_type_view.types.each do |sym, id|
       count_col = "#{sym}_count".to_sym
 
       count = object.public_send(count_col) if object.respond_to?(count_col)
@@ -301,6 +319,9 @@ class PostSerializer < BasicPostSerializer
            sym,
            opts: {
              taken_actions: actions,
+             notify_flag_types: @post_action_type_view.notify_flag_types,
+             additional_message_types: @post_action_type_view.additional_message_types,
+             post_action_type_view: @post_action_type_view,
            },
            can_see_post: can_see_post,
          )
@@ -327,11 +348,11 @@ class PostSerializer < BasicPostSerializer
       end
 
       # only show public data
-      unless scope.is_staff? || PostActionType.public_types.values.include?(id)
+      unless scope.is_staff? || public_flag_types.values.include?(id)
         summary[:count] = summary[:acted] ? 1 : 0
       end
 
-      summary.delete(:count) if summary[:count] == 0
+      summary.delete(:count) if summary[:count].to_i.zero?
 
       # Only include it if the user can do it or it has a count
       result << summary if summary[:can_act] || summary[:count]
@@ -581,12 +602,12 @@ class PostSerializer < BasicPostSerializer
       if @topic_view && (mentioned_users = @topic_view.mentioned_users[object.id])
         mentioned_users
       else
-        query = User
+        query = User.includes(:user_option)
         query = query.includes(:user_status) if SiteSetting.enable_user_status
-        query = query.where(username: object.mentions)
+        query = query.where(username_lower: object.mentions)
       end
 
-    users.map { |user| BasicUserWithStatusSerializer.new(user, root: false) }
+    users.map { |user| BasicUserSerializer.new(user, root: false, include_status: true).as_json }
   end
 
   def include_mentioned_users?
@@ -607,7 +628,7 @@ class PostSerializer < BasicPostSerializer
   end
 
   def reviewable_scores
-    reviewable&.reviewable_scores&.to_a || []
+    reviewable&.reviewable_scores.to_a
   end
 
   def user_custom_fields_object

@@ -1,16 +1,16 @@
-import { getOwner } from "@ember/application";
-import Service, { inject as service } from "@ember/service";
-import Ember from "ember";
+import { getOwner } from "@ember/owner";
+import Service, { service } from "@ember/service";
+import $ from "jquery";
 import { getAndClearUnhandledThemeErrors } from "discourse/app";
+import { bind } from "discourse/lib/decorators";
+import escape from "discourse/lib/escape";
+import getURL from "discourse/lib/get-url";
 import { disableImplicitInjections } from "discourse/lib/implicit-injections";
 import identifySource, {
   consolePrefix,
   getThemeInfo,
 } from "discourse/lib/source-identifier";
-import escape from "discourse-common/lib/escape";
-import getURL from "discourse-common/lib/get-url";
-import { bind } from "discourse-common/utils/decorators";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 const showingErrors = new Set();
 
@@ -26,15 +26,15 @@ export default class ClientErrorHandlerService extends Service {
     document.addEventListener("discourse-error", this.handleDiscourseError);
   }
 
-  get rootElement() {
-    return document.querySelector(getOwner(this).rootElement);
-  }
-
   willDestroy() {
     document.removeEventListener("discourse-error", this.handleDiscourseError);
     this.rootElement
       .querySelectorAll(".broken-theme-alert-banner")
       .forEach((e) => e.remove());
+  }
+
+  get rootElement() {
+    return document.querySelector(getOwner(this).rootElement);
   }
 
   @bind
@@ -58,14 +58,14 @@ export default class ClientErrorHandlerService extends Service {
     reportToConsole(error, source);
     reportToLogster(source.name, error);
 
-    const message = I18n.t("themes.broken_theme_alert");
+    const message = i18n("themes.broken_theme_alert");
     this.displayErrorNotice(message, source);
   }
 
   reportGenericError(e) {
     const { messageKey, error } = e.detail;
 
-    const message = I18n.t(messageKey);
+    const message = i18n(messageKey);
     const source = identifySource(error);
 
     reportToConsole(error, source);
@@ -83,14 +83,18 @@ export default class ClientErrorHandlerService extends Service {
 
     let html = `⚠️ ${escape(message)}`;
 
-    if (source && source.type === "theme") {
-      html += `<br/>${I18n.t("themes.error_caused_by", {
+    if (source?.type === "theme") {
+      html += `<br/>${i18n("themes.error_caused_by", {
         name: escape(source.name),
         path: source.path,
       })}`;
+    } else if (source?.type === "plugin") {
+      html += `<br/>${i18n("broken_plugin_alert", {
+        name: escape(source.name),
+      })}`;
     }
 
-    html += `<br/><span class='theme-error-suffix'>${I18n.t(
+    html += `<br/><span class='theme-error-suffix'>${i18n(
       "themes.only_admins"
     )}</span>`;
 
@@ -108,7 +112,7 @@ function reportToLogster(name, error) {
   };
 
   // TODO: To be moved out into a logster-provided lib
-  Ember.$.ajax(getURL("/logs/report_js_error"), {
+  $.ajax(getURL("/logs/report_js_error"), {
     data,
     type: "POST",
   });

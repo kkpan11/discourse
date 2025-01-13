@@ -2,9 +2,9 @@ import { cached, tracked } from "@glimmer/tracking";
 import Controller, { inject as controller } from "@ember/controller";
 import { action } from "@ember/object";
 import { alias, and, equal, readOnly } from "@ember/object/computed";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
 import DiscourseURL from "discourse/lib/url";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 const customUserNavMessagesDropdownRows = [];
 
@@ -27,6 +27,7 @@ export function resetCustomUserNavMessagesDropdownRows() {
 export default class extends Controller {
   @service router;
   @controller user;
+  @controller userTopicsList;
 
   @tracked group;
   @tracked tagId;
@@ -37,6 +38,10 @@ export default class extends Controller {
   @readOnly("user.viewingSelf") viewingSelf;
   @readOnly("router.currentRoute.parent.name") currentParentRouteName;
   @readOnly("site.can_tag_pms") pmTaggingEnabled;
+
+  get bulkSelectHelper() {
+    return this.userTopicsList.bulkSelectHelper;
+  }
 
   get messagesDropdownValue() {
     let value;
@@ -66,7 +71,7 @@ export default class extends Controller {
     const content = [
       {
         id: this.router.urlFor("userPrivateMessages.user", usernameLower),
-        name: I18n.t("user.messages.inbox"),
+        name: i18n("user.messages.inbox"),
       },
     ];
 
@@ -85,7 +90,7 @@ export default class extends Controller {
     if (this.pmTaggingEnabled) {
       content.push({
         id: this.router.urlFor("userPrivateMessages.tags", usernameLower),
-        name: I18n.t("user.messages.tags"),
+        name: i18n("user.messages.tags"),
         icon: "tags",
       });
     }

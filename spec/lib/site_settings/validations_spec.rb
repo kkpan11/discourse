@@ -6,7 +6,7 @@ RSpec.describe SiteSettings::Validations do
   subject(:validations) { Class.new.include(described_class).new }
 
   describe "default_categories" do
-    fab!(:category) { Fabricate(:category) }
+    fab!(:category)
 
     it "supports valid categories" do
       expect {
@@ -156,26 +156,6 @@ RSpec.describe SiteSettings::Validations do
 
         it "should be ok" do
           expect { validations.validate_enforce_second_factor("t") }.not_to raise_error
-        end
-      end
-
-      context "when social logins are enabled" do
-        let(:error_message) do
-          I18n.t(
-            "errors.site_settings.second_factor_cannot_enforce_with_socials",
-            auth_provider_names: "facebook, github",
-          )
-        end
-        before do
-          SiteSetting.enable_facebook_logins = true
-          SiteSetting.enable_github_logins = true
-        end
-
-        it "raises and error, and specifies the auth providers" do
-          expect { validations.validate_enforce_second_factor("all") }.to raise_error(
-            Discourse::InvalidParameters,
-            error_message,
-          )
         end
       end
 

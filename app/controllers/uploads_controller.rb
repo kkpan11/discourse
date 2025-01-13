@@ -4,12 +4,14 @@ require "mini_mime"
 
 class UploadsController < ApplicationController
   include ExternalUploadHelpers
+  include SecureUploadEndpointHelpers
 
   requires_login except: %i[show show_short _show_secure_deprecated show_secure]
 
   skip_before_action :preload_json,
                      :check_xhr,
                      :redirect_to_login_if_required,
+                     :redirect_to_profile_if_required,
                      only: %i[show show_short _show_secure_deprecated show_secure]
   protect_from_forgery except: :show
 
@@ -23,17 +25,33 @@ class UploadsController < ApplicationController
   def create
     # capture current user for block later on
     me = current_user
+    RateLimiter.new(
+      current_user,
+      "uploads-per-minute",
+      SiteSetting.max_uploads_per_minute,
+      1.minute.to_i,
+    ).performed!
 
-    params.permit(:type, :upload_type)
-    raise Discourse::InvalidParameters if params[:type].blank? && params[:upload_type].blank?
-    # 50 characters ought to be enough for the upload type
     type =
-      (params[:upload_type].presence || params[:type].presence).parameterize(separator: "_")[0..50]
+      if params[:upload_type].presence
+        params[:upload_type]
+      elsif params[:type].presence
+        Discourse.deprecate(
+          "the :type param of `POST /uploads` is deprecated, use the :upload_type param instead",
+          since: "3.4",
+          drop_from: "3.5",
+        )
+        params[:type]
+      else
+        params.require(:upload_type)
+      end
+    # 50 characters ought to be enough for the upload type
+    type = type.parameterize(separator: "_")[0..50]
 
-    if type == "avatar" && !me.admin? &&
+    if type == "avatar" &&
          (
            SiteSetting.discourse_connect_overrides_avatar ||
-             !TrustLevelAndStaffAndDisabledSetting.matches?(SiteSetting.allow_uploaded_avatars, me)
+             !me.in_any_groups?(SiteSetting.uploaded_avatars_allowed_groups_map)
          )
       return render json: failed_json, status: 422
     end
@@ -142,13 +160,10 @@ class UploadsController < ApplicationController
     # do not serve uploads requested via XHR to prevent XSS
     return xhr_not_allowed if request.xhr?
 
-    path_with_ext = "#{params[:path]}.#{params[:extension]}"
+    path_with_ext =
+      params[:extension].nil? ? params[:path] : "#{params[:path]}.#{params[:extension]}"
+    upload = upload_from_path_and_extension(path_with_ext)
 
-    sha1 = File.basename(path_with_ext, File.extname(path_with_ext))
-    # this takes care of optimized image requests
-    sha1 = sha1.partition("_").first if sha1.include?("_")
-
-    upload = Upload.find_by(sha1: sha1)
     return render_404 if upload.blank?
 
     return render_404 if SiteSetting.prevent_anons_from_downloading_files && current_user.nil?
@@ -167,11 +182,7 @@ class UploadsController < ApplicationController
   end
 
   def handle_secure_upload_request(upload, path_with_ext = nil)
-    if upload.access_control_post_id.present?
-      raise Discourse::InvalidAccess if !guardian.can_see?(upload.access_control_post)
-    else
-      return render_404 if current_user.nil?
-    end
+    check_secure_upload_permission(upload)
 
     # defaults to public: false, so only cached by the client browser
     cache_seconds =
@@ -227,7 +238,7 @@ class UploadsController < ApplicationController
                 "upload.attachments.too_large_humanized",
                 max_size:
                   ActiveSupport::NumberHelper.number_to_human_size(
-                    SiteSetting.max_attachment_size_kb.kilobytes,
+                    UploadsController.max_attachment_size_for_user(current_user).kilobytes,
                   ),
               ),
             )
@@ -276,7 +287,7 @@ class UploadsController < ApplicationController
       if url.present? && is_api
         maximum_upload_size = [
           SiteSetting.max_image_size_kb,
-          SiteSetting.max_attachment_size_kb,
+          UploadsController.max_attachment_size_for_user(current_user),
         ].max.kilobytes
         tempfile =
           begin
@@ -318,12 +329,20 @@ class UploadsController < ApplicationController
 
   private
 
+  def self.max_attachment_size_for_user(user)
+    if user.id == Discourse::SYSTEM_USER_ID && !SiteSetting.system_user_max_attachment_size_kb.zero?
+      SiteSetting.system_user_max_attachment_size_kb
+    else
+      SiteSetting.max_attachment_size_kb
+    end
+  end
+
   # We can preemptively check size for attachments, but not for (most) images
   # as they may be further reduced in size by UploadCreator (at this point
   # they may have already been reduced in size by preprocessors)
   def attachment_too_big?(file_name, file_size)
     !FileHelper.is_supported_image?(file_name) &&
-      file_size >= SiteSetting.max_attachment_size_kb.kilobytes
+      file_size >= UploadsController.max_attachment_size_for_user(current_user).kilobytes
   end
 
   # Gifs are not resized on the client and not reduced in size by UploadCreator

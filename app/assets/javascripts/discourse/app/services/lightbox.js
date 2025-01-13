@@ -1,9 +1,11 @@
-import Service, { inject as service } from "@ember/service";
+import Service, { service } from "@ember/service";
+import { bind } from "discourse/lib/decorators";
 import { disableImplicitInjections } from "discourse/lib/implicit-injections";
 import {
   DOCUMENT_ELEMENT_LIGHTBOX_OPEN_CLASS,
   LIGHTBOX_APP_EVENT_NAMES,
   MIN_CAROUSEL_ARROW_ITEM_COUNT,
+  MIN_CAROUSEL_ITEM_COUNT,
   SELECTORS,
 } from "discourse/lib/lightbox/constants";
 import {
@@ -12,7 +14,6 @@ import {
 } from "discourse/lib/lightbox/helpers";
 import { processHTML } from "discourse/lib/lightbox/process-html";
 import { isDocumentRTL } from "discourse/lib/text-direction";
-import { bind } from "discourse-common/utils/decorators";
 
 @disableImplicitInjections
 export default class LightboxService extends Service {
@@ -44,6 +45,7 @@ export default class LightboxService extends Service {
     this.options = {
       isMobile: this.site.mobileView,
       isRTL: isDocumentRTL(),
+      minCarouselItemCount: MIN_CAROUSEL_ITEM_COUNT,
       minCarouselArrowItemCount: MIN_CAROUSEL_ARROW_ITEM_COUNT,
       zoomOnOpen: false,
       canDownload:
@@ -56,6 +58,10 @@ export default class LightboxService extends Service {
       this,
       this.cleanupLightboxes
     );
+  }
+
+  willDestroy() {
+    this.#reset();
   }
 
   @bind
@@ -265,9 +271,5 @@ export default class LightboxService extends Service {
     });
 
     event.target.toggleAttribute(SELECTORS.DOCUMENT_LAST_FOCUSED_ELEMENT);
-  }
-
-  willDestroy() {
-    this.#reset();
   }
 }

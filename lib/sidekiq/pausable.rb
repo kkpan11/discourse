@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "thread"
-
 class SidekiqPauser
   TTL = 60
   PAUSED_KEY = "sidekiq_is_paused_v2"
@@ -127,7 +125,7 @@ class Sidekiq::Pausable
   end
 
   def call(worker, msg, queue)
-    if sidekiq_paused?(msg) && !(Jobs::RunHeartbeat === worker)
+    if sidekiq_paused?(msg)
       worker.class.perform_in(@delay, *msg["args"])
     else
       start = Process.clock_gettime(Process::CLOCK_MONOTONIC)

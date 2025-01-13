@@ -1,15 +1,16 @@
+import { deprecate as emberDeprecate } from "@ember/debug";
 import { setupTest } from "ember-qunit";
 import { module, test } from "qunit";
 import Sinon from "sinon";
+import deprecated, {
+  withSilencedDeprecations,
+  withSilencedDeprecationsAsync,
+} from "discourse/lib/deprecated";
 import DeprecationCounter from "discourse/tests/helpers/deprecation-counter";
 import {
   disableRaiseOnDeprecation,
   enableRaiseOnDeprecation,
 } from "discourse/tests/helpers/raise-on-deprecation";
-import deprecated, {
-  withSilencedDeprecations,
-  withSilencedDeprecationsAsync,
-} from "discourse-common/lib/deprecated";
 
 module("Unit | Utility | deprecated", function (hooks) {
   setupTest(hooks);
@@ -214,6 +215,27 @@ module("Unit | Utility | deprecated", function (hooks) {
       this.counterStub.callCount,
       1,
       "counter is incremented outside the silenced function"
+    );
+  });
+
+  test("can silence Ember deprecations", function (assert) {
+    withSilencedDeprecations("fake-ember-deprecation", () => {
+      emberDeprecate("fake ember deprecation message", false, {
+        id: "fake-ember-deprecation",
+        for: "not-ember-source",
+        since: "v0",
+        until: "v999",
+      });
+    });
+    assert.strictEqual(
+      this.warnStub.callCount,
+      0,
+      "console.warn is not called"
+    );
+    assert.strictEqual(
+      this.counterStub.callCount,
+      0,
+      "counter is not incremented"
     );
   });
 });

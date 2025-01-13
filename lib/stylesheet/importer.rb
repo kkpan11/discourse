@@ -6,7 +6,7 @@ module Stylesheet
   class Importer
     include GlobalPath
 
-    THEME_TARGETS ||= %w[embedded_theme mobile_theme desktop_theme]
+    THEME_TARGETS = %w[embedded_theme mobile_theme desktop_theme]
 
     def self.plugin_assets
       @plugin_assets ||= {}
@@ -86,20 +86,11 @@ module Stylesheet
           .body-font-#{font[:key].tr("_", "-")} {
             font-family: #{font[:stack]};
           }
-          .heading-font-#{font[:key].tr("_", "-")} h2 {
+          .heading-font-#{font[:key].tr("_", "-")} {
             font-family: #{font[:stack]};
           }
         CSS
       end
-
-      contents
-    end
-
-    def category_backgrounds
-      contents = +""
-      Category
-        .where("uploaded_background_id IS NOT NULL")
-        .each { |c| contents << category_css(c) if c.uploaded_background&.url.present? }
 
       contents
     end
@@ -215,11 +206,6 @@ module Stylesheet
       @theme == :nil ? nil : @theme
     end
 
-    def category_css(category)
-      full_slug = category.full_slug.split("-")[0..-2].join("-")
-      "body.category-#{full_slug} { background-image: url(#{upload_cdn_path(category.uploaded_background.url)}) }\n"
-    end
-
     def font_css(font)
       contents = +""
 
@@ -236,7 +222,7 @@ module Stylesheet
             )
           contents << <<~CSS
             @font-face {
-              font-family: #{font[:name]};
+              font-family: '#{font[:name]}';
               src: #{src};
               font-weight: #{variant[:weight]};
             }

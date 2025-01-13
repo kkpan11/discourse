@@ -15,6 +15,13 @@ module Onebox
 
       include Onebox::Mixins::GitBlobOnebox
 
+      def i18n
+        {
+          truncated_file: I18n.t("onebox.gitlab.truncated_file"),
+          show_original: I18n.t("onebox.gitlab.show_original"),
+        }
+      end
+
       def raw_regexp
         %r{gitlab\.com/(?<user>[^/]+)/(?<repo>[^/]+)/blob/(?<sha1>[^/]+)/(?<file>[^#]+)(#(L(?<from>[^-]*)(-L(?<to>.*))?))?}mi
       end
@@ -23,8 +30,14 @@ module Onebox
         "https://gitlab.com/#{m[:user]}/#{m[:repo]}/raw/#{m[:sha1]}/#{m[:file]}"
       end
 
-      def title
-        Sanitize.fragment(Onebox::Helpers.uri_unencode(link).sub(%r{^https?\://gitlab\.com/}, ""))
+      def auth_headers(_match)
+        {}
+      end
+
+      private
+
+      def data
+        super.merge({ domain: "gitlab.com/#{match[:user]}/#{match[:repo]}" })
       end
     end
   end

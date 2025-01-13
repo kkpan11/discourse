@@ -1,19 +1,20 @@
+import { getOwner } from "@ember/owner";
 import { click, render } from "@ember/test-helpers";
 import hbs from "htmlbars-inline-precompile";
 import { module, test } from "qunit";
 import { setupRenderingTest } from "discourse/tests/helpers/component-test";
 import pretender from "discourse/tests/helpers/create-pretender";
-import { query, queryAll } from "discourse/tests/helpers/qunit-helpers";
-import I18n from "I18n";
-import fabricators from "discourse/plugins/chat/discourse/lib/fabricators";
+import { queryAll } from "discourse/tests/helpers/qunit-helpers";
+import { i18n } from "discourse-i18n";
+import ChatFabricators from "discourse/plugins/chat/discourse/lib/fabricators";
 
 module("Discourse Chat | Component | chat-notice", function (hooks) {
   setupRenderingTest(hooks);
 
   test("displays all notices for a channel", async function (assert) {
-    this.channel = fabricators.channel();
+    this.channel = new ChatFabricators(getOwner(this)).channel();
     this.manager = this.container.lookup(
-      "service:chatChannelPaneSubscriptionsManager"
+      "service:chat-channel-notices-manager"
     );
     this.manager.handleNotice({
       channel_id: this.channel.id,
@@ -34,14 +35,14 @@ module("Discourse Chat | Component | chat-notice", function (hooks) {
 
     assert.strictEqual(notices.length, 2, "Two notices are rendered");
 
-    assert.true(notices[0].innerText.includes("hello"));
-    assert.true(notices[1].innerText.includes("goodbye"));
+    assert.dom(notices[0]).includesText("hello");
+    assert.dom(notices[1]).includesText("goodbye");
   });
 
   test("Notices can be cleared", async function (assert) {
-    this.channel = fabricators.channel();
+    this.channel = new ChatFabricators(getOwner(this)).channel();
     this.manager = this.container.lookup(
-      "service:chatChannelPaneSubscriptionsManager"
+      "service:chat-channel-notices-manager"
     );
     this.manager.handleNotice({
       channel_id: this.channel.id,
@@ -56,7 +57,7 @@ module("Discourse Chat | Component | chat-notice", function (hooks) {
       "Notice is present"
     );
 
-    await click(query(".chat-notices__notice__clear"), "Clear the notice");
+    await click(".chat-notices__notice__clear");
 
     assert.strictEqual(
       queryAll(".chat-notices .chat-notices__notice").length,
@@ -65,9 +66,9 @@ module("Discourse Chat | Component | chat-notice", function (hooks) {
     );
   });
   test("MentionWithoutMembership notice renders", async function (assert) {
-    this.channel = fabricators.channel();
+    this.channel = new ChatFabricators(getOwner(this)).channel();
     this.manager = this.container.lookup(
-      "service:chatChannelPaneSubscriptionsManager"
+      "service:chat-channel-notices-manager"
     );
     const text = "Joffrey can't chat, hermano";
     this.manager.handleNotice({
@@ -89,16 +90,13 @@ module("Discourse Chat | Component | chat-notice", function (hooks) {
     assert.dom(".mention-without-membership-notice__body__text").hasText(text);
     assert
       .dom(".mention-without-membership-notice__body__link")
-      .hasText(I18n.t("chat.mention_warning.invite"));
+      .hasText(i18n("chat.mention_warning.invite"));
 
-    pretender.put(`/chat/${this.channel.id}/invite`, () => {
+    pretender.post(`/chat/api/channels/${this.channel.id}/invites`, () => {
       return [200, { "Content-Type": "application/json" }, {}];
     });
 
-    await click(
-      query(".mention-without-membership-notice__body__link"),
-      "Invites the user"
-    );
+    await click(".mention-without-membership-notice__body__link");
 
     // I would love to test that the invitation sent text is present here but
     // dismiss is called right away instead of waiting 3 seconds.. Not much we can

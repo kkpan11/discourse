@@ -1,6 +1,10 @@
 # frozen_string_literal: true
 
 class UserBadge < ActiveRecord::Base
+  self.ignored_columns = [
+    :old_notification_id, # TODO: Remove once 20240829140226_drop_old_notification_id_columns has been promoted to pre-deploy
+  ]
+
   belongs_to :badge
   belongs_to :user
   belongs_to :granted_by, class_name: "User"
@@ -10,15 +14,15 @@ class UserBadge < ActiveRecord::Base
   BOOLEAN_ATTRIBUTES = %w[is_favorite]
 
   scope :grouped_with_count,
-        -> {
+        -> do
           group(:badge_id, :user_id)
             .select_for_grouping
             .order("MAX(featured_rank) ASC")
             .includes(:user, :granted_by, { badge: :badge_type }, post: :topic)
-        }
+        end
 
   scope :select_for_grouping,
-        -> {
+        -> do
           select(
             UserBadge.attribute_names.map do |name|
               operation = BOOLEAN_ATTRIBUTES.include?(name) ? "BOOL_OR" : "MAX"
@@ -26,10 +30,23 @@ class UserBadge < ActiveRecord::Base
             end,
             'COUNT(*) AS "count"',
           )
-        }
+        end
 
   scope :for_enabled_badges,
         -> { where("user_badges.badge_id IN (SELECT id FROM badges WHERE enabled)") }
+
+  scope :by_post_and_user,
+        ->(posts) do
+          posts.reduce(UserBadge.none) do |scope, post|
+            scope.or(UserBadge.where(user_id: post.user_id, post_id: post.id))
+          end
+        end
+  scope :for_post_header_badges,
+        ->(posts) do
+          by_post_and_user(posts).where(
+            "user_badges.badge_id IN (SELECT id FROM badges WHERE show_posts AND enabled AND listable AND show_in_post_header)",
+          )
+        end
 
   validates :badge_id, presence: true, uniqueness: { scope: :user_id }, if: :single_grant_badge?
 
@@ -120,11 +137,11 @@ end
 #  granted_at      :datetime         not null
 #  granted_by_id   :integer          not null
 #  post_id         :integer
-#  notification_id :integer
 #  seq             :integer          default(0), not null
 #  featured_rank   :integer
 #  created_at      :datetime         not null
 #  is_favorite     :boolean
+#  notification_id :bigint
 #
 # Indexes
 #

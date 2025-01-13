@@ -1,6 +1,6 @@
 import { action, get } from "@ember/object";
 import { cancel, schedule } from "@ember/runloop";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
 import { isEmpty } from "@ember/utils";
 import AddPmParticipants from "discourse/components/modal/add-pm-participants";
 import ChangeOwnerModal from "discourse/components/modal/change-owner";
@@ -16,37 +16,39 @@ import PublishPageModal from "discourse/components/modal/publish-page";
 import RawEmailModal from "discourse/components/modal/raw-email";
 import PostFlag from "discourse/lib/flag-targets/post-flag";
 import TopicFlag from "discourse/lib/flag-targets/topic-flag";
+import discourseLater from "discourse/lib/later";
 import { setTopicId } from "discourse/lib/topic-list-tracker";
 import DiscourseURL from "discourse/lib/url";
 import { ID_CONSTRAINT } from "discourse/models/topic";
 import DiscourseRoute from "discourse/routes/discourse";
-import discourseLater from "discourse-common/lib/later";
 
 const SCROLL_DELAY = 500;
 
-const TopicRoute = DiscourseRoute.extend({
-  composer: service(),
-  screenTrack: service(),
-  modal: service(),
+export default class TopicRoute extends DiscourseRoute {
+  @service composer;
+  @service screenTrack;
+  @service modal;
+  @service router;
 
-  scheduledReplace: null,
-  lastScrollPos: null,
-  isTransitioning: false,
+  scheduledReplace = null;
+
+  lastScrollPos = null;
+  isTransitioning = false;
+
+  queryParams = {
+    filter: { replace: true },
+    username_filters: { replace: true },
+  };
 
   buildRouteInfoMetadata() {
     return {
       scrollOnTransition: false,
     };
-  },
+  }
 
   redirect() {
     return this.redirectIfLoginRequired();
-  },
-
-  queryParams: {
-    filter: { replace: true },
-    username_filters: { replace: true },
-  },
+  }
 
   titleToken() {
     const model = this.modelFor("topic");
@@ -78,7 +80,7 @@ const TopicRoute = DiscourseRoute.extend({
       }
       return result;
     }
-  },
+  }
 
   @action
   showInvite() {
@@ -98,7 +100,7 @@ const TopicRoute = DiscourseRoute.extend({
         inviteModel: this.modelFor("topic"),
       },
     });
-  },
+  }
 
   @action
   showFlags(model) {
@@ -109,7 +111,7 @@ const TopicRoute = DiscourseRoute.extend({
         setHidden: () => model.set("hidden", true),
       },
     });
-  },
+  }
 
   @action
   showFlagTopic() {
@@ -121,7 +123,7 @@ const TopicRoute = DiscourseRoute.extend({
         setHidden: () => model.set("hidden", true),
       },
     });
-  },
+  }
 
   @action
   showPagePublish() {
@@ -129,7 +131,7 @@ const TopicRoute = DiscourseRoute.extend({
     this.modal.show(PublishPageModal, {
       model,
     });
-  },
+  }
 
   @action
   showTopicTimerModal() {
@@ -141,26 +143,26 @@ const TopicRoute = DiscourseRoute.extend({
         updateTopicTimerProperty: this.updateTopicTimerProperty,
       },
     });
-  },
+  }
 
   @action
   updateTopicTimerProperty(property, value) {
     this.modelFor("topic").set(`topic_timer.${property}`, value);
-  },
+  }
 
   @action
   showTopicSlowModeUpdate() {
     this.modal.show(EditSlowModeModal, {
       model: { topic: this.modelFor("topic") },
     });
-  },
+  }
 
   @action
   showChangeTimestamp() {
     this.modal.show(ChangeTimestampModal, {
       model: { topic: this.modelFor("topic") },
     });
-  },
+  }
 
   @action
   showFeatureTopic() {
@@ -180,7 +182,7 @@ const TopicRoute = DiscourseRoute.extend({
         removeBanner: () => topicController.send("removeBanner"),
       },
     });
-  },
+  }
 
   @action
   showHistory(model, revision) {
@@ -192,7 +194,7 @@ const TopicRoute = DiscourseRoute.extend({
         editPost: (post) => this.controllerFor("topic").send("editPost", post),
       },
     });
-  },
+  }
 
   @action
   showGrantBadgeModal() {
@@ -202,12 +204,12 @@ const TopicRoute = DiscourseRoute.extend({
         selectedPost: topicController.selectedPosts[0],
       },
     });
-  },
+  }
 
   @action
   showRawEmail(model) {
     this.modal.show(RawEmailModal, { model });
-  },
+  }
 
   @action
   moveToTopic() {
@@ -222,7 +224,7 @@ const TopicRoute = DiscourseRoute.extend({
         toggleMultiSelect: topicController.toggleMultiSelect,
       },
     });
-  },
+  }
 
   @action
   changeOwner() {
@@ -238,13 +240,12 @@ const TopicRoute = DiscourseRoute.extend({
         topic: this.modelFor("topic"),
       },
     });
-  },
+  }
 
   // Use replaceState to update the URL once it changes
   @action
   postChangedRoute(currentPost) {
-    // do nothing if we are transitioning to another route
-    if (this.isTransitioning || TopicRoute.disableReplaceState) {
+    if (TopicRoute.disableReplaceState) {
       return;
     }
 
@@ -278,16 +279,17 @@ const TopicRoute = DiscourseRoute.extend({
       cancel(this.scheduledReplace);
 
       this.setProperties({
-        lastScrollPos: parseInt($(document).scrollTop(), 10),
+        lastScrollPos: document.scrollingElement.scrollTop,
         scheduledReplace: discourseLater(
           this,
           "_replaceUnlessScrolling",
           postUrl,
+          topic.id,
           SCROLL_DELAY
         ),
       });
     }
-  },
+  }
 
   @action
   didTransition() {
@@ -295,21 +297,31 @@ const TopicRoute = DiscourseRoute.extend({
     const topicId = controller.get("model.id");
     setTopicId(topicId);
     return true;
-  },
+  }
 
   @action
-  willTransition(transition) {
-    this._super(...arguments);
+  willTransition() {
+    super.willTransition(...arguments);
     cancel(this.scheduledReplace);
-    this.set("isTransitioning", true);
-    transition.catch(() => this.set("isTransitioning", false));
     return true;
-  },
+  }
 
   // replaceState can be very slow on Android Chrome. This function debounces replaceState
   // within a topic until scrolling stops
-  _replaceUnlessScrolling(url) {
-    const currentPos = parseInt($(document).scrollTop(), 10);
+  _replaceUnlessScrolling(url, topicId) {
+    const { currentRouteName } = this.router;
+
+    const stillOnTopicRoute = currentRouteName.split(".")[0] === "topic";
+    if (!stillOnTopicRoute) {
+      return;
+    }
+
+    const stillOnSameTopic = this.modelFor("topic").id === topicId;
+    if (!stillOnSameTopic) {
+      return;
+    }
+
+    const currentPos = document.scrollingElement.scrollTop;
     if (currentPos === this.lastScrollPos) {
       DiscourseURL.replaceState(url);
       return;
@@ -321,10 +333,11 @@ const TopicRoute = DiscourseRoute.extend({
         this,
         "_replaceUnlessScrolling",
         url,
+        topicId,
         SCROLL_DELAY
       ),
     });
-  },
+  }
 
   setupParams(topic, params) {
     const postStream = topic.get("postStream");
@@ -339,16 +352,12 @@ const TopicRoute = DiscourseRoute.extend({
     }
 
     return topic;
-  },
+  }
 
   model(params, transition) {
     if (params.slug.match(ID_CONSTRAINT)) {
-      transition.abort();
-
-      DiscourseURL.routeTo(`/t/topic/${params.slug}/${params.id}`, {
-        replaceURL: true,
-      });
-
+      // URL with no slug - redirect to a URL with placeholder slug
+      this.router.transitionTo(`/t/-/${params.slug}/${params.id}`);
       return;
     }
 
@@ -365,15 +374,10 @@ const TopicRoute = DiscourseRoute.extend({
       topic = this.store.createRecord("topic", props);
       return this.setupParams(topic, queryParams);
     }
-  },
-
-  activate() {
-    this._super(...arguments);
-    this.set("isTransitioning", false);
-  },
+  }
 
   deactivate() {
-    this._super(...arguments);
+    super.deactivate(...arguments);
 
     this.searchService.searchContext = null;
 
@@ -389,12 +393,9 @@ const TopicRoute = DiscourseRoute.extend({
     this.appEvents.trigger("header:hide-topic");
 
     this.controllerFor("topic").set("model", null);
-  },
+  }
 
   setupController(controller, model) {
-    // In case we navigate from one topic directly to another
-    this.set("isTransitioning", false);
-
     controller.setProperties({
       model,
       editingTopic: false,
@@ -416,7 +417,5 @@ const TopicRoute = DiscourseRoute.extend({
     schedule("afterRender", () =>
       this.appEvents.trigger("header:update-topic", model)
     );
-  },
-});
-
-export default TopicRoute;
+  }
+}

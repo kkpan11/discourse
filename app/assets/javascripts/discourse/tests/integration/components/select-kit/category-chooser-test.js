@@ -1,10 +1,10 @@
-import { getOwner } from "@ember/application";
+import { getOwner } from "@ember/owner";
 import { render } from "@ember/test-helpers";
 import { hbs } from "ember-cli-htmlbars";
 import { module, test } from "qunit";
 import { setupRenderingTest } from "discourse/tests/helpers/component-test";
 import selectKit from "discourse/tests/helpers/select-kit-helper";
-import I18n from "I18n";
+import I18n from "discourse-i18n";
 
 module(
   "Integration | Component | select-kit/category-chooser",
@@ -40,7 +40,7 @@ module(
 
       await this.subject.expand();
 
-      assert.notOk(this.subject.rowByValue(2).exists());
+      assert.false(this.subject.rowByValue(2).exists());
     });
 
     test("with scopedCategoryId", async function (assert) {
@@ -303,11 +303,9 @@ module(
 
       await this.subject.expand();
 
-      assert.strictEqual(
-        this.subject.rowByIndex(0).el().querySelector(".category-desc")
-          .innerText,
-        'baz "bar ‘foo’'
-      );
+      assert
+        .dom(".category-desc", this.subject.rowByIndex(0).el())
+        .hasText('baz "bar ‘foo’');
     });
   }
 );

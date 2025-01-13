@@ -17,22 +17,22 @@ class ExternalUploadStub < ActiveRecord::Base
             }
 
   scope :expired_created,
-        -> {
+        -> do
           where(
             "status = ? AND created_at <= ?",
             ExternalUploadStub.statuses[:created],
-            CREATED_EXPIRY_HOURS.hours.ago,
+            (SiteSetting.enable_upload_debug_mode ? 48 : CREATED_EXPIRY_HOURS).hours.ago,
           )
-        }
+        end
 
   scope :expired_uploaded,
-        -> {
+        -> do
           where(
             "status = ? AND created_at <= ?",
             ExternalUploadStub.statuses[:uploaded],
             UPLOADED_EXPIRY_HOURS.hours.ago,
           )
-        }
+        end
 
   before_create do
     self.unique_identifier = SecureRandom.uuid

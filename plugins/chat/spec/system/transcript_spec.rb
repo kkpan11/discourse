@@ -2,7 +2,7 @@
 
 RSpec.describe "Quoting chat message transcripts", type: :system do
   fab!(:current_user) { Fabricate(:user) }
-  fab!(:admin) { Fabricate(:admin) }
+  fab!(:admin)
   fab!(:chat_channel_1) { Fabricate(:chat_channel) }
 
   let(:cdp) { PageObjects::CDP.new }
@@ -23,9 +23,8 @@ RSpec.describe "Quoting chat message transcripts", type: :system do
     expect(PageObjects::Components::Toasts.new).to have_success(
       I18n.t("js.chat.quote.copy_success"),
     )
-    clip_text = cdp.read_clipboard
-    expect(clip_text.chomp).to eq(generate_transcript(messages, current_user))
-    clip_text
+    cdp.clipboard_has_text?(generate_transcript(messages, current_user), chomp: true)
+    cdp.read_clipboard
   end
 
   def generate_transcript(messages, acting_user)
@@ -71,8 +70,8 @@ RSpec.describe "Quoting chat message transcripts", type: :system do
         clip_text = copy_messages_to_clipboard([message_1, message_2])
         topic_page.visit_topic_and_open_composer(post_1.topic)
         topic_page.fill_in_composer("This is a new post!\n\n" + clip_text)
-
         within(".d-editor-preview") { expect(page).to have_css(".chat-transcript", count: 2) }
+
         expect(page).to have_content("Originally sent in #{chat_channel_1.name}")
 
         topic_page.send_reply

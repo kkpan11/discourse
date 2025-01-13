@@ -1,10 +1,8 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
 RSpec.describe "DiscoursePoll endpoints" do
   describe "fetch voters for a poll" do
-    fab!(:user) { Fabricate(:user) }
+    fab!(:user)
     fab!(:post) { Fabricate(:post, raw: "[poll public=true]\n- A\n- B\n[/poll]") }
 
     fab!(:post_with_multiple_poll) { Fabricate(:post, raw: <<~SQL) }
@@ -15,8 +13,20 @@ RSpec.describe "DiscoursePoll endpoints" do
       [/poll]
       SQL
 
+    fab!(:post_with_ranked_choice_poll) { Fabricate(:post, raw: <<~SQL) }
+      [poll type=ranked_choice public=true]
+      - Red
+      - Blue
+      - Yellow
+      [/poll]
+      SQL
+
     let(:option_a) { "5c24fc1df56d764b550ceae1b9319125" }
     let(:option_b) { "e89dec30bbd9bf50fabf6a05b4324edf" }
+
+    let(:ranked_choice_option_a) { { id: "5c24fc1df56d764b550ceae1b9319125", rank: 2 } }
+    let(:ranked_choice_option_b) { { id: "e89dec30bbd9bf50fabf6a05b4324edf", rank: 1 } }
+    let(:ranked_choice_option_c) { { id: "a1a6e2779b52caadb93579c0c3db7c0c", rank: 0 } }
 
     it "should return the right response" do
       DiscoursePoll::Poll.vote(user, post.id, DiscoursePoll::DEFAULT_POLL_NAME, [option_a])
@@ -63,6 +73,43 @@ RSpec.describe "DiscoursePoll endpoints" do
       expect(option.length).to eq(1)
       expect(option.first["id"]).to eq(user.id)
       expect(option.first["username"]).to eq(user.username)
+    end
+
+    it "should return valid response for a ranked choice option" do
+      ranked_choice_poll = post_with_ranked_choice_poll.polls.first
+      ranked_choice_poll_options = ranked_choice_poll.poll_options
+      ranked_choice_votes = {
+        "0": {
+          digest: ranked_choice_poll_options.first.digest,
+          rank: "0",
+        },
+        "1": {
+          digest: ranked_choice_poll_options.second.digest,
+          rank: "2",
+        },
+        "2": {
+          digest: ranked_choice_poll_options.third.digest,
+          rank: "1",
+        },
+      }
+
+      DiscoursePoll::Poll.vote(
+        user,
+        post_with_ranked_choice_poll.id,
+        DiscoursePoll::DEFAULT_POLL_NAME,
+        ranked_choice_votes,
+      )
+
+      get "/polls/voters.json",
+          params: {
+            post_id: post_with_ranked_choice_poll.id,
+            poll_name: DiscoursePoll::DEFAULT_POLL_NAME,
+            option_id: ranked_choice_poll_options[1]["digest"],
+          }
+
+      expect(
+        JSON.parse(response.body)["voters"][ranked_choice_poll_options[1]["digest"]].first["rank"],
+      ).to eq("2")
     end
 
     describe "when post_id is blank" do
@@ -143,11 +190,71 @@ RSpec.describe "DiscoursePoll endpoints" do
       [/poll]
       SQL
 
+    fab!(:post_with_ranked_choice_poll) { Fabricate(:post, raw: <<~SQL) }
+      [poll type=ranked_choice public=true]
+      - Red
+      - Blue
+      - Yellow
+      [/poll]
+      SQL
+
     let(:option_a) { "5c24fc1df56d764b550ceae1b9319125" }
     let(:option_b) { "e89dec30bbd9bf50fabf6a05b4324edf" }
 
+    let(:ranked_choice_vote_a) { { digest: "5c24fc1df56d764b550ceae1b9319125", rank: 2 } }
+    let(:ranked_choice_vote_b) { { digest: "e89dec30bbd9bf50fabf6a05b4324edf", rank: 1 } }
+    let(:ranked_choice_vote_c) { { digest: "a1a6e2779b52caadb93579c0c3db7c0c", rank: 0 } }
+
     before do
+      sign_in(user1)
       user_votes = { user_0: option_a, user_1: option_a, user_2: option_b }
+      ranked_choice_poll = post_with_ranked_choice_poll.polls.first
+      ranked_choice_poll_options = ranked_choice_poll.poll_options
+
+      user_ranked_choice_votes = [
+        {
+          "0": {
+            digest: ranked_choice_poll_options.first.digest,
+            rank: "0",
+          },
+          "1": {
+            digest: ranked_choice_poll_options.second.digest,
+            rank: "2",
+          },
+          "2": {
+            digest: ranked_choice_poll_options.third.digest,
+            rank: "1",
+          },
+        },
+        {
+          "0": {
+            digest: ranked_choice_poll_options.first.digest,
+            rank: "0",
+          },
+          "1": {
+            digest: ranked_choice_poll_options.second.digest,
+            rank: "2",
+          },
+          "2": {
+            digest: ranked_choice_poll_options.third.digest,
+            rank: "1",
+          },
+        },
+        {
+          "0": {
+            digest: ranked_choice_poll_options.first.digest,
+            rank: "0",
+          },
+          "1": {
+            digest: ranked_choice_poll_options.second.digest,
+            rank: "2",
+          },
+          "2": {
+            digest: ranked_choice_poll_options.third.digest,
+            rank: "1",
+          },
+        },
+      ]
 
       [user1, user2, user3].each_with_index do |user, index|
         DiscoursePoll::Poll.vote(
@@ -155,6 +262,12 @@ RSpec.describe "DiscoursePoll endpoints" do
           post.id,
           DiscoursePoll::DEFAULT_POLL_NAME,
           [user_votes["user_#{index}".to_sym]],
+        )
+        DiscoursePoll::Poll.vote(
+          user,
+          post_with_ranked_choice_poll.id,
+          DiscoursePoll::DEFAULT_POLL_NAME,
+          user_ranked_choice_votes[index],
         )
         UserCustomField.create(user_id: user.id, name: "something", value: "value#{index}")
       end
@@ -207,6 +320,19 @@ RSpec.describe "DiscoursePoll endpoints" do
       )
     end
 
+    it "returns an error when attempting to return group results for ranked choice type poll" do
+      SiteSetting.poll_groupable_user_fields = "something"
+      get "/polls/grouped_poll_results.json",
+          params: {
+            post_id: post_with_ranked_choice_poll.id,
+            poll_name: DiscoursePoll::DEFAULT_POLL_NAME,
+            user_field_name: "something",
+          }
+
+      expect(response.status).to eq(422)
+      expect(response.body).to include("ranked_choice")
+    end
+
     it "returns an error when poll_groupable_user_fields is empty" do
       SiteSetting.poll_groupable_user_fields = ""
       get "/polls/grouped_poll_results.json",
@@ -218,6 +344,122 @@ RSpec.describe "DiscoursePoll endpoints" do
 
       expect(response.status).to eq(400)
       expect(response.body).to include("user_field_name")
+    end
+
+    context "when topic is in a private category" do
+      fab!(:admin)
+      fab!(:group)
+      fab!(:private_category) { Fabricate(:private_category, group: group) }
+      fab!(:private_topic) { Fabricate(:topic, category: private_category) }
+      fab!(:private_post) { Fabricate(:post, topic: private_topic, raw: <<~SQL) }
+        [poll type=multiple public=true min=1 max=2]
+        - A
+        - B
+        [/poll]
+        SQL
+      let(:groupable_user_field) { "anything" }
+      let(:expected_results) do
+        {
+          grouped_results: [
+            {
+              group: "Value0",
+              options: [
+                { digest: option_a, html: "A", votes: 1 },
+                { digest: option_b, html: "B", votes: 0 },
+              ],
+            },
+            {
+              group: "Value1",
+              options: [
+                { digest: option_a, html: "A", votes: 2 },
+                { digest: option_b, html: "B", votes: 1 },
+              ],
+            },
+            {
+              group: "Value2",
+              options: [
+                { digest: option_a, html: "A", votes: 0 },
+                { digest: option_b, html: "B", votes: 1 },
+              ],
+            },
+          ],
+        }
+      end
+
+      before do
+        user_votes = { user_0: option_a, user_1: option_a, user_2: option_b }
+        SiteSetting.poll_groupable_user_fields = groupable_user_field
+
+        [user1, user2, user3].each_with_index do |user, index|
+          group.add(user)
+          DiscoursePoll::Poll.vote(
+            user,
+            private_post.id,
+            DiscoursePoll::DEFAULT_POLL_NAME,
+            [user_votes["user_#{index}".to_sym]],
+          )
+          UserCustomField.create(
+            user_id: user.id,
+            name: groupable_user_field,
+            value: "value#{index}",
+          )
+        end
+
+        # Add another user to one of the fields to prove it groups users properly
+        group.add(user4)
+        DiscoursePoll::Poll.vote(
+          user4,
+          private_post.id,
+          DiscoursePoll::DEFAULT_POLL_NAME,
+          [option_a, option_b],
+        )
+        UserCustomField.create(user_id: user4.id, name: groupable_user_field, value: "value1")
+      end
+
+      it "returns grouped poll results for admin based on user field" do
+        sign_in(admin)
+
+        get "/polls/grouped_poll_results.json",
+            params: {
+              post_id: private_post.id,
+              poll_name: DiscoursePoll::DEFAULT_POLL_NAME,
+              user_field_name: groupable_user_field,
+            }
+
+        expect(response).to have_http_status :success
+        expect(response.parsed_body.deep_symbolize_keys).to eq(expected_results)
+      end
+
+      it "returns grouped poll results for user within private group based on user field" do
+        user = Fabricate(:user)
+        group.add(user)
+        sign_in(user)
+
+        get "/polls/grouped_poll_results.json",
+            params: {
+              post_id: private_post.id,
+              poll_name: DiscoursePoll::DEFAULT_POLL_NAME,
+              user_field_name: groupable_user_field,
+            }
+
+        expect(response).to have_http_status :success
+        expect(response.parsed_body.deep_symbolize_keys).to eq(expected_results)
+      end
+
+      it "returns an error when user does not have access to topic category" do
+        user = Fabricate(:user)
+        sign_in(user)
+
+        get "/polls/grouped_poll_results.json",
+            params: {
+              post_id: private_post.id,
+              poll_name: DiscoursePoll::DEFAULT_POLL_NAME,
+              user_field_name: groupable_user_field,
+            }
+
+        expect(response).to have_http_status :unprocessable_entity
+        expect(response.parsed_body["errors"][0]).to eq(I18n.t("poll.user_cant_post_in_topic"))
+      end
     end
   end
 end

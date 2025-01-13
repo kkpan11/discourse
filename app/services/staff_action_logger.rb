@@ -11,7 +11,7 @@ class StaffActionLogger
     raise Discourse::InvalidParameters.new(:admin) unless @admin && @admin.is_a?(User)
   end
 
-  USER_FIELDS ||= %i[id username name created_at trust_level last_seen_at last_emailed_at]
+  USER_FIELDS = %i[id username name created_at trust_level last_seen_at last_emailed_at]
 
   def log_user_deletion(deleted_user, opts = {})
     unless deleted_user && deleted_user.is_a?(User)
@@ -38,7 +38,7 @@ class StaffActionLogger
     StaffActionLogger.base_attrs.each do |attr|
       attrs[attr] = details.delete(attr) if details.has_key?(attr)
     end
-    attrs[:details] = details.map { |r| "#{r[0]}: #{r[1]}" }.join("\n")
+    attrs[:details] = details.map { |r| "#{r[0]}: #{truncate(r[1].to_s)}" }.join("\n")
     attrs[:acting_user_id] = @admin.id
     attrs[:action] = UserHistory.actions[:custom_staff]
     attrs[:custom_type] = custom_type
@@ -74,18 +74,22 @@ class StaffActionLogger
     name = deleted_post.user.try(:name) || I18n.t("staff_action_logs.unknown")
     topic_title = topic.try(:title) || I18n.t("staff_action_logs.not_found")
 
-    details = [
-      "id: #{deleted_post.id}",
-      "created_at: #{deleted_post.created_at}",
-      "user: #{username} (#{name})",
-      "topic: #{topic_title}",
-      "post_number: #{deleted_post.post_number}",
-      "raw: #{deleted_post.raw}",
-    ]
+    if opts[:permanent]
+      details = []
+    else
+      details = [
+        "id: #{deleted_post.id}",
+        "created_at: #{deleted_post.created_at}",
+        "user: #{username} (#{name})",
+        "topic: #{topic_title}",
+        "post_number: #{deleted_post.post_number}",
+        "raw: #{truncate(deleted_post.raw)}",
+      ]
+    end
 
     UserHistory.create!(
       params(opts).merge(
-        action: UserHistory.actions[:delete_post],
+        action: UserHistory.actions[opts[:permanent] ? :delete_post_permanently : :delete_post],
         post_id: deleted_post.id,
         details: details.join("\n"),
       ),
@@ -97,15 +101,19 @@ class StaffActionLogger
 
     user = topic.user ? "#{topic.user.username} (#{topic.user.name})" : "(deleted user)"
 
-    details = [
-      "id: #{topic.id}",
-      "created_at: #{topic.created_at}",
-      "user: #{user}",
-      "title: #{topic.title}",
-    ]
+    if action == "delete_topic_permanently"
+      details = []
+    else
+      details = [
+        "id: #{topic.id}",
+        "created_at: #{topic.created_at}",
+        "user: #{user}",
+        "title: #{topic.title}",
+      ]
 
-    if first_post = topic.ordered_posts.with_deleted.first
-      details << "raw: #{first_post.raw}"
+      if first_post = topic.ordered_posts.with_deleted.first
+        details << "raw: #{truncate(first_post.raw)}"
+      end
     end
 
     UserHistory.create!(
@@ -179,7 +187,7 @@ class StaffActionLogger
       params(opts).merge(
         action: UserHistory.actions[:post_edit],
         post_id: post.id,
-        details: "#{opts[:old_raw]}\n\n---\n\n#{post.raw}",
+        details: "#{truncate(opts[:old_raw])}\n\n---\n\n#{truncate(post.raw)}",
       ),
     )
   end
@@ -200,6 +208,21 @@ class StaffActionLogger
       params(opts).merge(
         action: UserHistory.actions[opts[:archived] ? :topic_archived : :topic_unarchived],
         topic_id: topic.id,
+      ),
+    )
+  end
+
+  def log_topic_slow_mode(topic, opts = {})
+    raise Discourse::InvalidParameters.new(:topic) unless topic && topic.is_a?(Topic)
+
+    details = opts[:enabled] ? ["interval: #{opts[:seconds]}", "until: #{opts[:until]}"] : []
+
+    UserHistory.create!(
+      params(opts).merge(
+        action:
+          UserHistory.actions[opts[:enabled] ? :topic_slow_mode_set : :topic_slow_mode_removed],
+        topic_id: topic.id,
+        details: details.join("\n"),
       ),
     )
   end
@@ -261,15 +284,12 @@ class StaffActionLogger
     raise Discourse::InvalidParameters.new(:new_theme) unless new_theme
 
     new_json = theme_json(new_theme)
-
     old_json, new_json = strip_duplicates(old_json, new_json)
 
     UserHistory.create!(
-      params(opts).merge(
+      params(opts).merge(json_params(old_json, new_json)).merge(
         action: UserHistory.actions[:change_theme],
         subject: new_theme.name,
-        previous_value: old_json,
-        new_value: new_json,
       ),
     )
   end
@@ -277,10 +297,9 @@ class StaffActionLogger
   def log_theme_destroy(theme, opts = {})
     raise Discourse::InvalidParameters.new(:theme) unless theme
     UserHistory.create!(
-      params(opts).merge(
+      params(opts).merge(json_params(theme_json(theme), nil)).merge(
         action: UserHistory.actions[:delete_theme],
         subject: theme.name,
-        previous_value: theme_json(theme),
       ),
     )
   end
@@ -314,7 +333,7 @@ class StaffActionLogger
     UserHistory.create!(
       params(opts).merge(
         action: UserHistory.actions[:change_theme_setting],
-        subject: "#{theme.name}: #{setting_name.to_s}",
+        subject: "#{theme.name}: #{setting_name}",
         previous_value: previous_value,
         new_value: new_value,
       ),
@@ -322,7 +341,7 @@ class StaffActionLogger
   end
 
   def log_site_text_change(subject, new_text = nil, old_text = nil, opts = {})
-    raise Discourse::InvalidParameters.new(:subject) unless subject.present?
+    raise Discourse::InvalidParameters.new(:subject) if subject.blank?
     UserHistory.create!(
       params(opts).merge(
         action: UserHistory.actions[:change_site_text],
@@ -391,7 +410,7 @@ class StaffActionLogger
     )
   end
 
-  BADGE_FIELDS ||= %i[
+  BADGE_FIELDS = %i[
     id
     name
     description
@@ -553,7 +572,7 @@ class StaffActionLogger
 
     changed_attributes = category.previous_changes.slice(*category_params.keys)
 
-    if !old_permissions.empty? && (old_permissions != category_params[:permissions])
+    if !old_permissions.empty? && (old_permissions != category_params[:permissions].to_h)
       changed_attributes.merge!(
         permissions: [old_permissions.to_json, category_params[:permissions].to_json],
       )
@@ -804,7 +823,7 @@ class StaffActionLogger
       "rejected_at: #{rejected_at}",
       "user: #{username} (#{name})",
       "topic: #{topic_title}",
-      "raw: #{reviewable.payload["raw"]}",
+      "raw: #{truncate(reviewable.payload["raw"])}",
     ]
 
     UserHistory.create!(
@@ -860,9 +879,7 @@ class StaffActionLogger
 
     if opts[:changes]
       old_values, new_values = get_changes(opts[:changes])
-      history_params[:previous_value] = old_values&.join(", ") unless opts[:changes].keys.include?(
-        "id",
-      )
+      history_params[:previous_value] = old_values&.join(", ") if opts[:changes].keys.exclude?("id")
       history_params[:new_value] = new_values&.join(", ")
     end
 
@@ -938,8 +955,11 @@ class StaffActionLogger
   def log_watched_words_creation(watched_word)
     raise Discourse::InvalidParameters.new(:watched_word) unless watched_word
 
+    action_key = :watched_word_create
+    action_key = :create_watched_word_group if watched_word.is_a?(WatchedWordGroup)
+
     UserHistory.create!(
-      action: UserHistory.actions[:watched_word_create],
+      action: UserHistory.actions[action_key],
       acting_user_id: @admin.id,
       details: watched_word.action_log_details,
       context: WatchedWord.actions[watched_word.action],
@@ -949,8 +969,11 @@ class StaffActionLogger
   def log_watched_words_deletion(watched_word)
     raise Discourse::InvalidParameters.new(:watched_word) unless watched_word
 
+    action_key = :watched_word_destroy
+    action_key = :delete_watched_word_group if watched_word.is_a?(WatchedWordGroup)
+
     UserHistory.create!(
-      action: UserHistory.actions[:watched_word_destroy],
+      action: UserHistory.actions[action_key],
       acting_user_id: @admin.id,
       details: watched_word.action_log_details,
       context: WatchedWord.actions[watched_word.action],
@@ -1015,7 +1038,68 @@ class StaffActionLogger
     )
   end
 
+  def log_custom_emoji_create(name, opts = {})
+    opts[:details] = "Group: #{opts[:group]}" if opts[:group].present?
+
+    UserHistory.create!(
+      params(opts).merge(action: UserHistory.actions[:custom_emoji_create], new_value: name),
+    )
+  end
+
+  def log_custom_emoji_destroy(name, opts = {})
+    UserHistory.create!(
+      params(opts).merge(action: UserHistory.actions[:custom_emoji_destroy], previous_value: name),
+    )
+  end
+
+  def log_tag_group_create(name, new_value, opts = {})
+    UserHistory.create!(
+      params(opts).merge(json_params(nil, new_value)).merge(
+        action: UserHistory.actions[:tag_group_create],
+        subject: name,
+      ),
+    )
+  end
+
+  def log_tag_group_destroy(name, old_value, opts = {})
+    UserHistory.create!(
+      params(opts).merge(json_params(old_value, nil)).merge(
+        action: UserHistory.actions[:tag_group_destroy],
+        subject: name,
+      ),
+    )
+  end
+
+  def log_tag_group_change(name, old_data, new_data)
+    UserHistory.create!(
+      params.merge(json_params(old_data, new_data)).merge(
+        action: UserHistory.actions[:tag_group_change],
+        subject: name,
+      ),
+    )
+  end
+
+  def log_delete_associated_accounts(user, previous_value:, context:)
+    UserHistory.create!(
+      params.merge(
+        action: UserHistory.actions[:delete_associated_accounts],
+        target_user_id: user.id,
+        previous_value:,
+        context:,
+      ),
+    )
+  end
+
   private
+
+  def json_params(previous_value, new_value)
+    if (previous_value && previous_value.length > UserHistory::MAX_JSON_LENGTH) ||
+         (new_value && new_value.length > UserHistory::MAX_JSON_LENGTH)
+      { context: I18n.t("staff_action_logs.json_too_long") }
+    else
+      { previous_value: previous_value, new_value: new_value }
+    end
+  end
 
   def get_changes(changes)
     return unless changes
@@ -1045,5 +1129,13 @@ class StaffActionLogger
   def custom_section_details(section)
     urls = section.sidebar_urls.map { |url| "#{url.name} - #{url.value}" }
     "links: #{urls.join(", ")}"
+  end
+
+  def truncate(s)
+    if s.size > UserHistory::MAX_CONTEXT_LENGTH
+      "#{s.slice(..UserHistory::MAX_CONTEXT_LENGTH)}..."
+    else
+      s
+    end
   end
 end

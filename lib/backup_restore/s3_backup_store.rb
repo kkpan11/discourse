@@ -2,7 +2,7 @@
 
 module BackupRestore
   class S3BackupStore < BackupStore
-    UPLOAD_URL_EXPIRES_AFTER_SECONDS ||= 6.hours.to_i
+    UPLOAD_URL_EXPIRES_AFTER_SECONDS = 6.hours.to_i
 
     delegate :abort_multipart,
              :presign_multipart_part,
@@ -53,9 +53,6 @@ module BackupRestore
       obj = s3_helper.object(filename)
       raise BackupFileExists.new if obj.exists?
 
-      # TODO (martin) We can remove this at a later date when we move this
-      # ensure CORS for backups and direct uploads to a post-site-setting
-      # change event, so the rake task doesn't have to be run manually.
       @s3_helper.ensure_cors!([S3CorsRulesets::BACKUP_DIRECT_UPLOAD])
 
       presigned_url(obj, :put, UPLOAD_URL_EXPIRES_AFTER_SECONDS)
@@ -131,9 +128,13 @@ module BackupRestore
     def unsorted_files
       objects = []
 
-      s3_helper.list.each do |obj|
-        objects << create_file_from_object(obj) if obj.key.match?(file_regex)
-      end
+      begin
+        s3_helper.list.each do |obj|
+          objects << create_file_from_object(obj) if obj.key.match?(file_regex)
+        end
+      rescue StandardError
+        NoMethodError
+      end #fired when s3_helper.list is nil - wont respond to .nil?
 
       objects
     rescue Aws::Errors::ServiceError => e

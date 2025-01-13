@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe BookmarkReminderNotificationHandler do
-  fab!(:user) { Fabricate(:user) }
+  fab!(:user)
 
   before { Discourse.redis.flushdb }
 
@@ -85,6 +85,18 @@ RSpec.describe BookmarkReminderNotificationHandler do
       it "resets reminder_at after the reminder gets sent" do
         send_notification
         expect(Bookmark.find_by(id: bookmark.id).reminder_at).to eq(nil)
+      end
+    end
+
+    context "when the auto_delete_preference is never" do
+      before do
+        TopicUser.create!(topic: bookmark.bookmarkable.topic, user: user, bookmarked: true)
+        bookmark.update(auto_delete_preference: Bookmark.auto_delete_preferences[:never])
+      end
+
+      it "does not reset reminder_at after the reminder gets sent" do
+        send_notification
+        expect(Bookmark.find_by(id: bookmark.id).reminder_at).not_to eq(nil)
       end
     end
   end

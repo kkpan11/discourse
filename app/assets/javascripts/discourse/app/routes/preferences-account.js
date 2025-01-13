@@ -1,10 +1,13 @@
 import { action } from "@ember/object";
-import showModal from "discourse/lib/show-modal";
+import { service } from "@ember/service";
+import AvatarSelectorModal from "discourse/components/modal/avatar-selector";
 import UserBadge from "discourse/models/user-badge";
 import RestrictedUserRoute from "discourse/routes/restricted-user";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
-export default RestrictedUserRoute.extend({
+export default class PreferencesAccount extends RestrictedUserRoute {
+  @service modal;
+
   model() {
     const user = this.modelFor("user");
     if (this.siteSettings.enable_badges) {
@@ -20,7 +23,7 @@ export default RestrictedUserRoute.extend({
     } else {
       return user;
     }
-  },
+  }
 
   setupController(controller, user) {
     controller.reset();
@@ -31,12 +34,14 @@ export default RestrictedUserRoute.extend({
       newPrimaryGroupInput: user.get("primary_group_id"),
       newFlairGroupId: user.get("flair_group_id"),
       newStatus: user.status,
-      subpageTitle: I18n.t("user.preferences_nav.account"),
+      subpageTitle: i18n("user.preferences_nav.account"),
     });
-  },
+  }
 
   @action
   showAvatarSelector(user) {
-    showModal("avatar-selector").setProperties({ user });
-  },
-});
+    this.modal.show(AvatarSelectorModal, {
+      model: { user },
+    });
+  }
+}

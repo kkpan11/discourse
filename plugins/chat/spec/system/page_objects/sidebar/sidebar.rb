@@ -14,10 +14,6 @@ module PageObjects
         find(PUBLIC_CHANNELS_SECTION_SELECTOR)
       end
 
-      def channels_section
-        find(PUBLIC_CHANNELS_SECTION_SELECTOR)
-      end
-
       def dms_section
         find(DM_CHANNELS_SECTION_SELECTOR)
       end
@@ -41,14 +37,50 @@ module PageObjects
         self
       end
 
+      def has_user_threads_section?
+        has_css?(
+          ".sidebar-section-link[data-link-name='user-threads'][href='/chat/threads']",
+          text: I18n.t("js.chat.my_threads.title"),
+        )
+      end
+
+      def has_no_user_threads_section?
+        has_no_css?(
+          ".sidebar-section-link[data-link-name='user-threads'][href='/chat/threads']",
+          text: I18n.t("js.chat.my_threads.title"),
+        )
+      end
+
+      def has_unread_user_threads?
+        has_css?(
+          ".sidebar-section-link[data-link-name='user-threads'] .sidebar-section-link-suffix.icon.unread",
+        )
+      end
+
+      def has_no_unread_user_threads?
+        has_no_css?(
+          ".sidebar-section-link[data-link-name='user-threads'] .sidebar-section-link-suffix.icon.unread",
+        )
+      end
+
       def has_unread_channel?(channel)
-        has_css?(".sidebar-section-link.channel-#{channel.id} .sidebar-section-link-suffix.unread")
+        has_css?(
+          ".sidebar-section-link.channel-#{channel.id} .sidebar-section-link-suffix:is(.unread, .urgent)",
+        )
       end
 
       def has_no_unread_channel?(channel)
         has_no_css?(
-          ".sidebar-section-link.channel-#{channel.id} .sidebar-section-link-suffix.unread",
+          ".sidebar-section-link.channel-#{channel.id} .sidebar-section-link-suffix:is(.unread, .urgent)",
         )
+      end
+
+      def has_active_channel?(channel)
+        has_css?(".sidebar-section-link.channel-#{channel.id}.active")
+      end
+
+      def has_no_active_channel?(channel)
+        has_no_css?(".sidebar-section-link.channel-#{channel.id}.active")
       end
     end
   end

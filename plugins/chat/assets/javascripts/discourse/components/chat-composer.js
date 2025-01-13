@@ -1,16 +1,20 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
-import { getOwner } from "@ember/application";
 import { action } from "@ember/object";
+import { getOwner } from "@ember/owner";
 import { cancel, next } from "@ember/runloop";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
 import { isPresent } from "@ember/utils";
+import $ from "jquery";
 import { emojiSearch, isSkinTonableEmoji } from "pretty-text/emoji";
 import { translations } from "pretty-text/emoji/data";
 import { Promise } from "rsvp";
+import EmojiPickerDetached from "discourse/components/emoji-picker/detached";
 import InsertHyperlink from "discourse/components/modal/insert-hyperlink";
 import { SKIP } from "discourse/lib/autocomplete";
 import { setupHashtagAutocomplete } from "discourse/lib/hashtag-autocomplete";
+import { cloneJSON } from "discourse/lib/object";
+import { findRawTemplate } from "discourse/lib/raw-templates";
 import { emojiUrlFor } from "discourse/lib/text";
 import userSearch from "discourse/lib/user-search";
 import {
@@ -18,13 +22,14 @@ import {
   initUserStatusHtml,
   renderUserStatusHtml,
 } from "discourse/lib/user-status-on-autocomplete";
-import { cloneJSON } from "discourse-common/lib/object";
-import { findRawTemplate } from "discourse-common/lib/raw-templates";
-import I18n from "I18n";
-import ChatModalChannelSummary from "discourse/plugins/chat/discourse/components/chat/modal/channel-summary";
+import virtualElementFromTextRange from "discourse/lib/virtual-element-from-text-range";
+import { waitForClosedKeyboard } from "discourse/lib/wait-for-keyboard";
+import { i18n } from "discourse-i18n";
 import { chatComposerButtons } from "discourse/plugins/chat/discourse/lib/chat-composer-buttons";
 import ChatMessageInteractor from "discourse/plugins/chat/discourse/lib/chat-message-interactor";
 import TextareaInteractor from "discourse/plugins/chat/discourse/lib/textarea-interactor";
+
+const CHAT_PRESENCE_KEEP_ALIVE = 5 * 1000; // 5 seconds
 
 export default class ChatComposer extends Component {
   @service capabilities;
@@ -32,15 +37,15 @@ export default class ChatComposer extends Component {
   @service siteSettings;
   @service store;
   @service chat;
-  @service chatComposerPresenceManager;
+  @service composerPresenceManager;
   @service chatComposerWarningsTracker;
   @service appEvents;
-  @service chatEmojiReactionStore;
-  @service chatEmojiPickerManager;
+  @service emojiStore;
   @service currentUser;
   @service chatApi;
   @service chatDraftsManager;
   @service modal;
+  @service menu;
 
   @tracked isFocused = false;
   @tracked inProgressUploadsCount = 0;
@@ -48,8 +53,8 @@ export default class ChatComposer extends Component {
 
   get shouldRenderMessageDetails() {
     return (
-      this.currentMessage?.editing ||
-      (this.context === "channel" && this.currentMessage?.inReplyTo)
+      this.draft?.editing ||
+      (this.context === "channel" && this.draft?.inReplyTo)
     );
   }
 
@@ -95,7 +100,7 @@ export default class ChatComposer extends Component {
   @action
   didUpdateMessage() {
     this.cancelPersistDraft();
-    this.composer.textarea.value = this.currentMessage.message;
+    this.composer.textarea.value = this.draft.message;
     this.persistDraft();
     this.captureMentions({ skipDebounce: true });
   }
@@ -112,31 +117,27 @@ export default class ChatComposer extends Component {
   }
 
   @action
-  handleInlineButonAction(buttonAction, event) {
+  handleInlineButtonAction(buttonAction, event) {
     event.stopPropagation();
 
     buttonAction();
   }
 
-  get currentMessage() {
-    return this.composer.message;
-  }
-
   get hasContent() {
     const minLength = this.siteSettings.chat_minimum_message_length || 1;
     return (
-      this.currentMessage?.message?.length >= minLength ||
+      this.draft?.message?.length >= minLength ||
       (this.canAttachUploads && this.hasUploads)
     );
   }
 
   get hasUploads() {
-    return this.currentMessage?.uploads?.length > 0;
+    return this.draft?.uploads?.length > 0;
   }
 
   get sendEnabled() {
     return (
-      (this.hasContent || this.currentMessage?.editing) &&
+      (this.hasContent || this.draft?.editing) &&
       !this.pane.sending &&
       !this.inProgressUploadsCount > 0
     );
@@ -144,6 +145,7 @@ export default class ChatComposer extends Component {
 
   @action
   setup() {
+    this.composer.scroller = this.args.scroller;
     this.appEvents.on("chat:modify-selection", this, "modifySelection");
     this.appEvents.on(
       "chat:open-insert-link-modal",
@@ -196,8 +198,8 @@ export default class ChatComposer extends Component {
 
   @action
   onInput(event) {
-    this.currentMessage.draftSaved = false;
-    this.currentMessage.message = event.target.value;
+    this.draft.draftSaved = false;
+    this.draft.message = event.target.value;
     this.composer.textarea.refreshHeight();
     this.reportReplyingPresence();
     this.persistDraft();
@@ -206,7 +208,7 @@ export default class ChatComposer extends Component {
 
   @action
   onUploadChanged(uploads, { inProgressUploadsCount }) {
-    this.currentMessage.draftSaved = false;
+    this.draft.draftSaved = false;
 
     this.inProgressUploadsCount = inProgressUploadsCount || 0;
 
@@ -214,9 +216,9 @@ export default class ChatComposer extends Component {
       typeof uploads !== "undefined" &&
       inProgressUploadsCount !== "undefined" &&
       inProgressUploadsCount === 0 &&
-      this.currentMessage
+      this.draft
     ) {
-      this.currentMessage.uploads = cloneJSON(uploads);
+      this.draft.uploads = cloneJSON(uploads);
     }
 
     this.composer.textarea?.focus();
@@ -238,26 +240,27 @@ export default class ChatComposer extends Component {
     event?.preventDefault();
 
     if (
-      this.currentMessage.editing &&
+      this.draft.editing &&
       !this.hasUploads &&
-      this.currentMessage.message.length === 0
+      this.draft.message.length === 0
     ) {
       this.#deleteEmptyMessage();
       return;
     }
 
-    await this.args.onSendMessage(this.currentMessage);
+    await this.args.onSendMessage(this.draft);
     this.composer.textarea.refreshHeight();
   }
 
   reportReplyingPresence() {
-    if (!this.args.channel || !this.currentMessage) {
+    if (!this.args.channel || !this.draft) {
       return;
     }
 
-    this.chatComposerPresenceManager.notifyState(
+    this.composerPresenceManager.notifyState(
       this.presenceChannelName,
-      !this.currentMessage.editing && this.hasContent
+      !this.draft.editing && this.hasContent,
+      CHAT_PRESENCE_KEEP_ALIVE
     );
   }
 
@@ -278,14 +281,20 @@ export default class ChatComposer extends Component {
   }
 
   @action
-  onTextareaFocusIn(textarea) {
+  onTextareaFocusOut() {
+    this.isFocused = false;
+  }
+
+  @action
+  onTextareaFocusIn(event) {
+    this.isFocused = true;
+
     if (!this.capabilities.isIOS) {
       return;
     }
 
     // hack to prevent the whole viewport to move on focus input
-    // we need access to native node
-    textarea = this.composer.textarea.textarea;
+    const textarea = event.target;
     textarea.style.transform = "translateY(-99999px)";
     textarea.focus();
     window.requestAnimationFrame(() => {
@@ -330,17 +339,14 @@ export default class ChatComposer extends Component {
       return false;
     }
 
-    if (
-      event.key === "ArrowUp" &&
-      !this.hasContent &&
-      !this.currentMessage.editing
-    ) {
+    if (event.key === "ArrowUp" && !this.hasContent && !this.draft.editing) {
       if (event.shiftKey && this.lastMessage?.replyable) {
         this.composer.replyTo(this.lastMessage);
       } else {
         const editableMessage = this.lastUserMessage(this.currentUser);
         if (editableMessage?.editable) {
           this.composer.edit(editableMessage);
+          this.args.channel.draft = editableMessage;
         }
       }
     }
@@ -366,14 +372,10 @@ export default class ChatComposer extends Component {
 
   @action
   onSelectEmoji(emoji) {
-    const code = `:${emoji}:`;
-    this.chatEmojiReactionStore.track(code);
-    this.composer.textarea.addText(this.composer.textarea.getSelected(), code);
+    this.composer.textarea.emojiSelected(emoji);
 
     if (this.site.desktopView) {
       this.composer.focus();
-    } else {
-      this.chatEmojiPickerManager.close();
     }
   }
 
@@ -381,7 +383,7 @@ export default class ChatComposer extends Component {
   captureMentions(opts = { skipDebounce: false }) {
     if (this.hasContent) {
       this.chatComposerWarningsTracker.trackMentions(
-        this.currentMessage,
+        this.draft,
         opts.skipDebounce
       );
     } else {
@@ -389,16 +391,9 @@ export default class ChatComposer extends Component {
     }
   }
 
-  @action
-  showChannelSummaryModal() {
-    this.modal.show(ChatModalChannelSummary, {
-      model: { channelId: this.args.channel.id },
-    });
-  }
-
   #addMentionedUser(userData) {
     const user = this.store.createRecord("user", userData);
-    this.currentMessage.mentionedUsers.set(user.id, user);
+    this.draft.mentionedUsers.set(user.id, user);
   }
 
   #applyUserAutocomplete($textarea) {
@@ -488,16 +483,33 @@ export default class ChatComposer extends Component {
           return [matches[1]];
         }
       },
-      transformComplete: (v) => {
+      transformComplete: async (v) => {
         if (v.code) {
-          this.chatEmojiReactionStore.track(v.code);
           return `${v.code}:`;
         } else {
           $textarea.autocomplete({ cancel: true });
-          this.chatEmojiPickerManager.open({
-            context: this.context,
-            initialFilter: v.term,
-          });
+
+          const menuOptions = {
+            identifier: "emoji-picker",
+            groupIdentifier: "emoji-picker",
+            component: EmojiPickerDetached,
+            context: `channel_${this.args.channel.id}`,
+            modalForMobile: true,
+            data: {
+              didSelectEmoji: (emoji) => {
+                this.onSelectEmoji(emoji);
+              },
+              term: v.term,
+              context: "chat",
+            },
+          };
+
+          // Close the keyboard before showing the emoji picker
+          // it avoids a whole range of bugs on iOS
+          await waitForClosedKeyboard(this);
+
+          const virtualElement = virtualElementFromTextRange();
+          this.menuInstance = await this.menu.show(virtualElement, menuOptions);
           return "";
         }
       },
@@ -527,8 +539,9 @@ export default class ChatComposer extends Component {
           }
 
           if (term === "") {
-            if (this.chatEmojiReactionStore.favorites.length) {
-              return resolve(this.chatEmojiReactionStore.favorites.slice(0, 5));
+            const favorites = this.emojiStore.favoritesForContext("chat");
+            if (favorites.length > 0) {
+              return resolve(favorites.slice(0, 5));
             } else {
               return resolve([
                 "slight_smile",
@@ -569,7 +582,7 @@ export default class ChatComposer extends Component {
 
           const options = emojiSearch(term, {
             maxResults: 5,
-            diversity: this.chatEmojiReactionStore.diversity,
+            diversity: this.emojiStore.diversity,
             exclude: emojiDenied,
           });
 
@@ -583,7 +596,7 @@ export default class ChatComposer extends Component {
           })
           .then((list) => {
             if (list?.length) {
-              list.push({ label: I18n.t("composer.more_emoji"), term });
+              list.push({ label: i18n("composer.more_emoji"), term });
             }
             return list;
           });
@@ -598,9 +611,9 @@ export default class ChatComposer extends Component {
   #deleteEmptyMessage() {
     new ChatMessageInteractor(
       getOwner(this),
-      this.currentMessage,
+      this.draft,
       this.context
     ).delete();
-    this.reset(this.args.channel, this.args.thread);
+    this.resetDraft();
   }
 }

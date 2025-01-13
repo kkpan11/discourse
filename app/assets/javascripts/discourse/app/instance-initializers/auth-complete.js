@@ -1,10 +1,11 @@
 import EmberObject from "@ember/object";
 import { next } from "@ember/runloop";
+import { htmlSafe } from "@ember/template";
+import CreateAccount from "discourse/components/modal/create-account";
 import LoginModal from "discourse/components/modal/login";
 import cookie, { removeCookie } from "discourse/lib/cookie";
-import showModal from "discourse/lib/show-modal";
 import DiscourseUrl from "discourse/lib/url";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 // This is happening outside of the app via popup
 const AuthErrors = [
@@ -37,8 +38,8 @@ export default {
     }
 
     if (lastAuthResult) {
-      const router = owner.lookup("router:main");
-      router.one("didTransition", () => {
+      const router = owner.lookup("service:router");
+      router.one("routeDidChange", () => {
         next(() => {
           const options = JSON.parse(lastAuthResult);
 
@@ -46,7 +47,7 @@ export default {
             return;
           }
 
-          if (router.currentPath === "invites.show") {
+          if (router.currentRouteName === "invites.show") {
             owner
               .lookup("controller:invites-show")
               .authenticationComplete(options);
@@ -55,29 +56,42 @@ export default {
             const siteSettings = owner.lookup("service:site-settings");
 
             const loginError = (errorMsg, className, properties, callback) => {
-              const applicationRouter = owner.lookup("route:application");
+              const applicationRoute = owner.lookup("route:application");
               const applicationController = owner.lookup(
                 "controller:application"
               );
-              modal.show(LoginModal, {
-                model: {
-                  showNotActivated: (props) =>
-                    applicationRouter.send("showNotActivated", props),
-                  showCreateAccount: (props) =>
-                    applicationRouter.send("showCreateAccount", props),
-                  canSignUp: applicationController.canSignUp,
-                  flash: errorMsg,
-                  flashType: className || "success",
-                  awaitingApproval: options.awaiting_approval,
-                  ...properties,
-                },
-              });
+
+              const loginProps = {
+                canSignUp: applicationController.canSignUp,
+                flash: errorMsg,
+                flashType: className || "success",
+                awaitingApproval: options.awaiting_approval,
+                ...properties,
+              };
+
+              if (siteSettings.full_page_login) {
+                router.transitionTo("login").then((login) => {
+                  Object.keys(loginProps || {}).forEach((key) => {
+                    login.controller.set(key, loginProps[key]);
+                  });
+                });
+              } else {
+                modal.show(LoginModal, {
+                  model: {
+                    showNotActivated: (props) =>
+                      applicationRoute.send("showNotActivated", props),
+                    showCreateAccount: (props) =>
+                      applicationRoute.send("showCreateAccount", props),
+                    ...loginProps,
+                  },
+                });
+              }
               next(() => callback?.());
             };
 
             if (options.omniauth_disallow_totp) {
               return loginError(
-                I18n.t("login.omniauth_disallow_totp"),
+                i18n("login.omniauth_disallow_totp"),
                 "error",
                 {
                   loginName: options.email,
@@ -90,7 +104,7 @@ export default {
             for (let i = 0; i < AuthErrors.length; i++) {
               const cond = AuthErrors[i];
               if (options[cond]) {
-                return loginError(I18n.t(`login.${cond}`));
+                return loginError(htmlSafe(i18n(`login.${cond}`)));
               }
             }
 
@@ -116,20 +130,27 @@ export default {
               return;
             }
 
-            const skipConfirmation = siteSettings.auth_skip_create_confirm;
-            owner.lookup("controller:createAccount").setProperties({
-              accountEmail: options.email,
-              accountUsername: options.username,
-              accountName: options.name,
-              authOptions: EmberObject.create(options),
-              skipConfirmation,
-            });
-
             next(() => {
-              showModal("create-account", {
-                modalClass: "create-account",
-                titleAriaElementId: "create-account-title",
-              });
+              const createAccountProps = {
+                accountEmail: options.email,
+                accountUsername: options.username,
+                accountName: options.name,
+                authOptions: EmberObject.create(options),
+                skipConfirmation: siteSettings.auth_skip_create_confirm,
+              };
+
+              if (siteSettings.full_page_login) {
+                router.transitionTo("signup").then((signup) => {
+                  const signupController =
+                    signup.controller || owner.lookup("controller:signup");
+                  Object.keys(createAccountProps || {}).forEach((key) => {
+                    signupController.set(key, createAccountProps[key]);
+                  });
+                  signupController.handleSkipConfirmation();
+                });
+              } else {
+                modal.show(CreateAccount, { model: createAccountProps });
+              }
             });
           }
         });

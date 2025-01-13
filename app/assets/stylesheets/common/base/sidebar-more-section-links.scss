@@ -1,35 +1,8 @@
-.btn-flat.sidebar-more-section-links-details-summary {
-  &:focus-within,
-  &:active,
-  &:hover {
-    background: var(--d-sidebar-highlight-background);
-    svg.d-icon {
-      color: var(--d-sidebar-highlight-color);
-    }
-  }
-
-  height: var(--d-sidebar-row-height);
-  color: var(--d-sidebar-link-color);
-  display: flex;
-  list-style: none;
-  box-sizing: border-box;
-  width: 100%;
-  padding: 0 var(--d-sidebar-row-horizontal-padding);
-  justify-content: left;
-
-  .d-icon {
-    width: var(--d-sidebar-section-link-prefix-width);
-    margin-right: var(--d-sidebar-section-link-prefix-margin-right);
-    color: var(--d-sidebar-link-icon-color);
-    font-size: var(--font-down-1);
-  }
-}
-
 .sidebar-more-section-links-details-content {
   background-color: var(--d-sidebar-background);
   transition: background-color 0.25s;
   box-shadow: var(--shadow-card);
-  border: 1px solid var(--primary-low);
+  border: 1px solid var(--d-sidebar-border-color);
   margin: 0 calc(var(--d-sidebar-row-horizontal-padding) * 2 / 3);
 
   .sidebar-row {
@@ -43,7 +16,7 @@
 }
 
 .sidebar-more-section-links-details-content-footer {
-  border-top: 2px solid var(--primary-low);
+  border-top: 2px solid var(--d-sidebar-border-color);
   display: flex;
   width: 100%;
 

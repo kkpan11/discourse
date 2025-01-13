@@ -28,6 +28,7 @@
     position: relative;
     display: inline-block;
     cursor: pointer;
+    margin: 0;
   }
 
   &__checkbox {
@@ -83,7 +84,7 @@
       font-size: var(--font-down-1);
       color: var(--secondary);
       left: 7px;
-      top: 7px;
+      top: 6px;
       position: absolute;
     }
   }

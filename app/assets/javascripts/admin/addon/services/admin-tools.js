@@ -1,12 +1,11 @@
-import { getOwner } from "@ember/application";
 import { action } from "@ember/object";
-import Service, { inject as service } from "@ember/service";
+import Service, { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import { Promise } from "rsvp";
 import { ajax } from "discourse/lib/ajax";
+import I18n, { i18n } from "discourse-i18n";
 import PenalizeUserModal from "admin/components/modal/penalize-user";
 import AdminUser from "admin/models/admin-user";
-import I18n from "I18n";
 
 // A service that can act as a bridge between the front end Discourse application
 // and the admin application. Use this if you need front end code to access admin
@@ -14,13 +13,11 @@ import I18n from "I18n";
 export default class AdminToolsService extends Service {
   @service dialog;
   @service modal;
+  @service router;
 
   showActionLogs(target, filters) {
-    const controller = getOwner(target).lookup(
-      "controller:adminLogs.staffActionLogs"
-    );
-    target.transitionToRoute("adminLogs.staffActionLogs").then(() => {
-      controller.changeFilters(filters);
+    this.router.transitionTo("adminLogs.staffActionLogs", {
+      queryParams: { filters },
     });
   }
 
@@ -79,10 +76,9 @@ export default class AdminToolsService extends Service {
           POSTS: adminUser.get("post_count"),
           TOPICS: adminUser.get("topic_count"),
           email:
-            adminUser.get("email") || I18n.t("flagging.hidden_email_address"),
+            adminUser.get("email") || i18n("flagging.hidden_email_address"),
           ip_address:
-            adminUser.get("ip_address") ||
-            I18n.t("flagging.ip_address_missing"),
+            adminUser.get("ip_address") || i18n("flagging.ip_address_missing"),
         })
       );
 
@@ -93,7 +89,7 @@ export default class AdminToolsService extends Service {
           message,
           class: "flagging-delete-spammer",
           confirmButtonLabel: "flagging.yes_delete_spammer",
-          confirmButtonIcon: "exclamation-triangle",
+          confirmButtonIcon: "triangle-exclamation",
           didConfirm: () => {
             return ajax(`/admin/users/${userId}.json`, {
               type: "DELETE",
@@ -114,7 +110,7 @@ export default class AdminToolsService extends Service {
                 }
               })
               .catch(() => {
-                this.dialog.alert(I18n.t("admin.user.delete_failed"));
+                this.dialog.alert(i18n("admin.user.delete_failed"));
                 reject();
               });
           },

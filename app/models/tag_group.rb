@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 class TagGroup < ActiveRecord::Base
+  validates :name, length: { maximum: 100 }
   validates_uniqueness_of :name, case_sensitive: false
 
   has_many :tag_group_memberships, dependent: :destroy
@@ -22,7 +23,7 @@ class TagGroup < ActiveRecord::Base
 
   after_commit { DiscourseTagging.clear_cache! }
 
-  attr_accessor :permissions
+  attr_reader :permissions
 
   def tag_names=(tag_names_arg)
     DiscourseTagging.add_or_create_tags_by_name(self, tag_names_arg, unlimited: true)
@@ -55,7 +56,12 @@ class TagGroup < ActiveRecord::Base
   def self.resolve_permissions(permissions)
     permissions.map do |group, permission|
       group_id = Group.group_id_from_param(group)
-      permission = TagGroupPermission.permission_types[permission] unless permission.is_a?(Integer)
+      permission =
+        if permission.is_a?(Integer)
+          permission
+        else
+          TagGroupPermission.permission_types[permission.to_sym]
+        end
       [group_id, permission]
     end
   end
@@ -116,7 +122,7 @@ end
 # Table name: tag_groups
 #
 #  id            :integer          not null, primary key
-#  name          :string           not null
+#  name          :string(100)      not null
 #  created_at    :datetime         not null
 #  updated_at    :datetime         not null
 #  parent_tag_id :integer

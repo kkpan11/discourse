@@ -2,13 +2,14 @@ import { computed } from "@ember/object";
 import { htmlSafe } from "@ember/template";
 import { h } from "virtual-dom";
 import { autoUpdatingRelativeAge } from "discourse/lib/formatter";
-import { decorateHashtags } from "discourse/lib/hashtag-autocomplete";
+import { iconNode } from "discourse/lib/icon-library";
 import { userPath } from "discourse/lib/url";
+import DecoratorHelper from "discourse/widgets/decorator-helper";
 import { avatarFor } from "discourse/widgets/post";
+import PostCooked from "discourse/widgets/post-cooked";
 import RawHtml from "discourse/widgets/raw-html";
 import { createWidget } from "discourse/widgets/widget";
-import { iconNode } from "discourse-common/lib/icon-library";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 export function actionDescriptionHtml(actionCode, createdAt, username, path) {
   const dt = new Date(createdAt);
@@ -24,7 +25,7 @@ export function actionDescriptionHtml(actionCode, createdAt, username, path) {
       who = `<a class="mention" href="${userPath(username)}">@${username}</a>`;
     }
   }
-  return htmlSafe(I18n.t(`action_codes.${actionCode}`, { who, when, path }));
+  return htmlSafe(i18n(`action_codes.${actionCode}`, { who, when, path }));
 }
 
 export function actionDescription(
@@ -52,9 +53,9 @@ const groupActionCodes = ["invited_group", "removed_group"];
 
 const icons = {
   "closed.enabled": "lock",
-  "closed.disabled": "unlock-alt",
+  "closed.disabled": "unlock-keyhole",
   "autoclosed.enabled": "lock",
-  "autoclosed.disabled": "unlock-alt",
+  "autoclosed.disabled": "unlock-keyhole",
   "archived.enabled": "folder",
   "archived.disabled": "folder-open",
   "pinned.enabled": "thumbtack",
@@ -65,13 +66,14 @@ const icons = {
   "banner.disabled": "thumbtack unpinned",
   "visible.enabled": "far-eye",
   "visible.disabled": "far-eye-slash",
-  split_topic: "sign-out-alt",
-  invited_user: "plus-circle",
-  invited_group: "plus-circle",
-  user_left: "minus-circle",
-  removed_user: "minus-circle",
-  removed_group: "minus-circle",
+  split_topic: "right-from-bracket",
+  invited_user: "circle-plus",
+  invited_group: "circle-plus",
+  user_left: "circle-minus",
+  removed_user: "circle-minus",
+  removed_group: "circle-minus",
   public_topic: "comment",
+  open_topic: "comment",
   private_topic: "envelope",
   autobumped: "hand-point-right",
 };
@@ -98,7 +100,7 @@ export default createWidget("post-small-action", {
 
   buildAttributes(attrs) {
     return {
-      "aria-label": I18n.t("share.post", {
+      "aria-label": i18n("share.post", {
         postNumber: attrs.post_number,
         username: attrs.username,
       }),
@@ -133,7 +135,6 @@ export default createWidget("post-small-action", {
   html(attrs) {
     const contents = [];
     const buttons = [];
-    const customMessage = [];
 
     contents.push(
       avatarFor.call(this, "small", {
@@ -160,7 +161,7 @@ export default createWidget("post-small-action", {
       buttons.push(
         this.attach("button", {
           className: "btn-flat small-action-recover",
-          icon: "undo",
+          icon: "arrow-rotate-left",
           action: "recoverPost",
           title: "post.controls.undelete",
         })
@@ -171,7 +172,7 @@ export default createWidget("post-small-action", {
       buttons.push(
         this.attach("button", {
           className: "btn-flat small-action-edit",
-          icon: "pencil-alt",
+          icon: "pencil",
           action: "editPost",
           title: "post.controls.edit",
         })
@@ -182,33 +183,27 @@ export default createWidget("post-small-action", {
       buttons.push(
         this.attach("button", {
           className: "btn-flat btn-danger small-action-delete",
-          icon: "trash-alt",
+          icon: "trash-can",
           action: "deletePost",
           title: "post.controls.delete",
         })
       );
     }
 
-    if (!attrs.actionDescriptionWidget && attrs.cooked) {
-      const fragment = document.createElement("div");
-      fragment.innerHTML = attrs.cooked;
-      decorateHashtags(fragment, this.site);
-      customMessage.push(
-        new RawHtml({
-          html: `<div class='small-action-custom-message'>${fragment.innerHTML}</div>`,
-        })
-      );
-    }
-
     return [
-      h("span.tabLoc", {
-        attributes: { "aria-hidden": true, tabindex: -1 },
-      }),
       h("div.topic-avatar", iconNode(icons[attrs.actionCode] || "exclamation")),
       h("div.small-action-desc", [
         h("div.small-action-contents", contents),
         h("div.small-action-buttons", buttons),
-        customMessage,
+        !attrs.actionDescriptionWidget && attrs.cooked
+          ? h("div.small-action-custom-message", [
+              new PostCooked(
+                attrs,
+                new DecoratorHelper(this),
+                this.currentUser
+              ),
+            ])
+          : null,
       ]),
     ];
   },

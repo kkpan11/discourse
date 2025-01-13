@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 RSpec.describe Admin::SiteSettingsController do
-  fab!(:admin) { Fabricate(:admin) }
-  fab!(:moderator) { Fabricate(:moderator) }
-  fab!(:user) { Fabricate(:user) }
+  fab!(:admin)
+  fab!(:moderator)
+  fab!(:user)
 
   describe "#index" do
     context "when logged in as an admin" do
@@ -19,6 +19,16 @@ RSpec.describe Admin::SiteSettingsController do
         locale = json["site_settings"].select { |s| s["setting"] == "default_locale" }
 
         expect(locale.length).to eq(1)
+      end
+
+      it "does not return hidden site settings" do
+        get "/admin/site_settings.json"
+        expect(response.status).to eq(200)
+        expect(
+          response.parsed_body["site_settings"].find do |s|
+            s["setting"] == "set_locale_from_cookie"
+          end,
+        ).to be_nil
       end
     end
 
@@ -228,13 +238,12 @@ RSpec.describe Admin::SiteSettingsController do
       end
 
       it "works for deprecated settings" do
-        put "/admin/site_settings/search_tokenize_chinese_japanese_korean.json",
-            params: {
-              search_tokenize_chinese_japanese_korean: true,
-            }
+        stub_deprecated_settings!(override: true) do
+          put "/admin/site_settings/old_one.json", params: { old_one: true }
 
-        expect(response.status).to eq(200)
-        expect(SiteSetting.search_tokenize_chinese).to eq(true)
+          expect(response.status).to eq(200)
+          expect(SiteSetting.new_one).to eq(true)
+        end
       end
 
       it "throws an error when the parameter is not a configurable site setting" do
@@ -259,7 +268,7 @@ RSpec.describe Admin::SiteSettingsController do
 
         expect(response.status).to eq(422)
         expect(SiteSetting.personal_message_enabled_groups).to eq(
-          Group::AUTO_GROUPS[:trust_level_4],
+          "1|2|#{Group::AUTO_GROUPS[:trust_level_4]}",
         )
       end
 
@@ -269,11 +278,35 @@ RSpec.describe Admin::SiteSettingsController do
         expect(SiteSetting.title).to eq("")
       end
 
+      it "allows value to be a blank string for selectable_avatars" do
+        SiteSetting.selectable_avatars = [Fabricate(:image_upload)]
+        put "/admin/site_settings/selectable_avatars.json", params: { selectable_avatars: "" }
+        expect(response.status).to eq(200)
+        expect(SiteSetting.selectable_avatars).to eq([])
+      end
+
       it "sanitizes integer values" do
         put "/admin/site_settings/suggested_topics.json", params: { suggested_topics: "1,000" }
 
         expect(response.status).to eq(200)
         expect(SiteSetting.suggested_topics).to eq(1000)
+      end
+
+      it "sanitizes file_size_restriction values" do
+        put "/admin/site_settings/max_image_size_kb.json", params: { max_image_size_kb: "4096" }
+
+        expect(response.status).to eq(200)
+        expect(SiteSetting.max_image_size_kb).to eq(4096)
+      end
+
+      it "sanitizes negative integer values correctly" do
+        put "/admin/site_settings/pending_users_reminder_delay_minutes.json",
+            params: {
+              pending_users_reminder_delay_minutes: "-1",
+            }
+
+        expect(response.status).to eq(200)
+        expect(SiteSetting.pending_users_reminder_delay_minutes).to eq(-1)
       end
 
       context "with default user options" do
@@ -600,6 +633,22 @@ RSpec.describe Admin::SiteSettingsController do
 
         expect(SiteSetting.max_category_nesting).to eq(3)
         expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"]).to include(
+          I18n.t("errors.site_settings.site_setting_is_hidden"),
+        )
+      end
+
+      it "does not allow changing of globally shadowed settings" do
+        SiteSetting.max_category_nesting = 3
+        SiteSetting.stubs(:shadowed_settings).returns(Set.new([:max_category_nesting]))
+
+        put "/admin/site_settings/max_category_nesting.json", params: { max_category_nesting: 2 }
+
+        expect(SiteSetting.max_category_nesting).to eq(3)
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"]).to include(
+          I18n.t("errors.site_settings.site_setting_is_shadowed_globally"),
+        )
       end
 
       context "with an plugin" do

@@ -1,11 +1,12 @@
 import Component from "@ember/component";
+import $ from "jquery";
 import { cook } from "discourse/lib/text";
 
-export default Component.extend({
+export default class StyleguideMarkdown extends Component {
   didInsertElement() {
-    this._super(...arguments);
+    super.didInsertElement(...arguments);
 
     const contents = $(this.element).html();
     cook(contents).then((cooked) => $(this.element).html(cooked.toString()));
-  },
-});
+  }
+}

@@ -1,13 +1,11 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
 describe Chat::ChannelSerializer do
   subject(:serializer) { described_class.new(chat_channel, scope: guardian, root: nil) }
 
-  fab!(:user) { Fabricate(:user) }
-  fab!(:admin) { Fabricate(:admin) }
-  fab!(:chat_channel) { Fabricate(:chat_channel) }
+  fab!(:user)
+  fab!(:admin)
+  fab!(:chat_channel)
 
   let(:guardian_user) { user }
   let(:guardian) { Guardian.new(guardian_user) }
@@ -52,7 +50,7 @@ describe Chat::ChannelSerializer do
 
   describe "#meta" do
     context "for category channels" do
-      fab!(:chat_channel) { Fabricate(:chat_channel) }
+      fab!(:chat_channel)
 
       it "has the required message_bus_last_ids keys and calls MessageBus" do
         MessageBus.expects(:last_id).with(Chat::Publisher.root_message_bus_channel(chat_channel.id))
@@ -110,9 +108,18 @@ describe Chat::ChannelSerializer do
 
       it "does not get the kick_message_bus_last_id" do
         MessageBus.expects(:last_id).at_least_once
-        MessageBus.expects(:last_id).never
+        MessageBus
+          .expects(:last_id)
+          .with(Chat::Publisher.kick_users_message_bus_channel(chat_channel.id))
+          .never
         expect(serializer.as_json[:meta][:message_bus_last_ids].key?(:kick)).to eq(false)
       end
     end
+  end
+
+  it "has a unicode_title" do
+    chat_channel.update!(name: ":cat: Cats")
+
+    expect(serializer.as_json[:unicode_title]).to eq("🐱 Cats")
   end
 end

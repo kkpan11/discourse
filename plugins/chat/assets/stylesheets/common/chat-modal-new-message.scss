@@ -4,31 +4,15 @@
     background: transparent;
   }
 
-  .modal-body {
-    padding: 0;
+  .chat-message-creator__search,
+  .chat-message-creator__new-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-block: 1rem;
   }
 
-  .modal-header {
-    display: none;
-  }
-
-  .modal-inner-container {
-    width: var(--modal-max-width);
-    box-shadow: var(--shadow-dropdown);
-    overflow: hidden;
-  }
-
-  .mobile-device & {
-    .modal-inner-container {
-      border-radius: 0;
-      margin: 0 auto auto auto;
-      box-shadow: var(--shadow-modal);
-    }
-  }
-
-  .not-mobile-device & {
-    .modal-inner-container {
-      margin: 10px auto auto auto;
-    }
+  .chat-message-creator__add-members-header-container {
+    padding-inline: 1rem;
   }
 }

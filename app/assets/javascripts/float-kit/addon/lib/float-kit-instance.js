@@ -1,9 +1,10 @@
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
-import { cancel, next } from "@ember/runloop";
-import { makeArray } from "discourse-common/lib/helpers";
-import discourseLater from "discourse-common/lib/later";
-import { bind } from "discourse-common/utils/decorators";
+import { cancel } from "@ember/runloop";
+import { service } from "@ember/service";
+import { bind } from "discourse/lib/decorators";
+import { makeArray } from "discourse/lib/helpers";
+import discourseLater from "discourse/lib/later";
 
 const TOUCH_OPTIONS = { passive: true, capture: true };
 
@@ -13,44 +14,46 @@ function cancelEvent(event) {
 }
 
 export default class FloatKitInstance {
-  @tracked expanded = false;
-  @tracked id = null;
+  @service site;
 
-  trigger = null;
-  content = null;
+  @tracked id = null;
 
   @action
   async show() {
-    this.expanded = true;
-
-    await new Promise((resolve) => next(resolve));
+    await this.options.onShow?.();
   }
 
   @action
   async close() {
-    this.expanded = false;
-
-    await new Promise((resolve) => next(resolve));
+    await this.options.onClose?.();
   }
 
   @action
-  onFocus(event) {
-    this.onTrigger(event);
+  async onFocus(event) {
+    await this.onTrigger(event);
   }
 
   @action
-  onBlur(event) {
-    this.onTrigger(event);
+  async onBlur(event) {
+    await this.onTrigger(event);
   }
 
   @action
-  onFocusIn(event) {
-    this.onTrigger(event);
+  async onFocusIn(event) {
+    await this.onTrigger(event);
   }
 
   @action
-  onFocusOut(event) {
-    this.onTrigger(event);
+  async onFocusOut(event) {
+    await this.onTrigger(event);
+  }
+
+  @action
+  trapPointerDown(event) {
+    // this is done to avoid trigger on click outside when you click on your own trigger
+    // given trigger and content are not in the same div, we can't just check if target is
+    // inside the menu
+    event.stopPropagation();
   }
 
   @action
@@ -101,7 +104,11 @@ export default class FloatKitInstance {
   }
 
   tearDownListeners() {
-    if (!this.options.listeners) {
+    if (typeof this.trigger.addEventListener === "function") {
+      this.trigger.removeEventListener("pointerdown", this.trapPointerDown);
+    }
+
+    if (!this.options?.listeners) {
       return;
     }
 
@@ -137,7 +144,11 @@ export default class FloatKitInstance {
   }
 
   setupListeners() {
-    if (!this.options.listeners) {
+    if (typeof this.trigger.addEventListener === "function") {
+      this.trigger.addEventListener("pointerdown", this.trapPointerDown);
+    }
+
+    if (!this.options?.listeners) {
       return;
     }
 
@@ -189,10 +200,28 @@ export default class FloatKitInstance {
   }
 
   get triggers() {
+    if (
+      typeof this.options.triggers === "object" &&
+      !Array.isArray(this.options.triggers)
+    ) {
+      return this.site.mobileView
+        ? this.options.triggers.mobile ?? ["click"]
+        : this.options.triggers.desktop ?? ["click"];
+    }
+
     return this.options.triggers ?? ["click"];
   }
 
   get untriggers() {
+    if (
+      typeof this.options.untriggers === "object" &&
+      !Array.isArray(this.options.untriggers)
+    ) {
+      return this.site.mobileView
+        ? this.options.untriggers.mobile ?? ["click"]
+        : this.options.untriggers.desktop ?? ["click"];
+    }
+
     return this.options.untriggers ?? ["click"];
   }
 }

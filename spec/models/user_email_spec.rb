@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe UserEmail do
-  fab!(:user) { Fabricate(:user) }
+  fab!(:user)
 
   describe "Validations" do
     it "allows only one primary email" do
@@ -61,6 +61,28 @@ RSpec.describe UserEmail do
       Fabricate.build(:secondary_email, user: user, primary: false).save(validate: false)
       Fabricate.build(:secondary_email, user: user, primary: false).save(validate: false)
       expect(user.user_emails.count).to eq 3
+    end
+  end
+
+  describe ".ensure_consistency!" do
+    context "when some users have no primary emails" do
+      it "creates primary emails for the users without a primary email" do
+        user_with_primary_email = Fabricate(:user)
+        user_without_primary_email = Fabricate(:user)
+        user_without_any_email = Fabricate(:user)
+
+        user_without_primary_email.primary_email.update_column(:primary, false)
+        user_without_any_email.user_emails.delete_all
+        original_email_of_user_with_primary_email = user_with_primary_email.primary_email.email
+
+        described_class.ensure_consistency!
+
+        expect(user_without_primary_email.reload.primary_email).to be_present
+        expect(user_without_any_email.reload.primary_email).to be_present
+        expect(
+          user_with_primary_email.reload.primary_email.email,
+        ).to eq original_email_of_user_with_primary_email
+      end
     end
   end
 end

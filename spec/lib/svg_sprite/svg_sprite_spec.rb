@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe SvgSprite do
-  fab!(:theme) { Fabricate(:theme) }
+  fab!(:theme)
 
   before do
     SvgSprite.clear_plugin_svg_sprite_cache!
@@ -11,7 +11,7 @@ RSpec.describe SvgSprite do
   it "can generate a bundle" do
     bundle = SvgSprite.bundle
     expect(bundle).to match(/heart/)
-    expect(bundle).to match(/angle-double-down/)
+    expect(bundle).to match(/angles-down/)
   end
 
   it "can generate paths" do
@@ -26,13 +26,12 @@ RSpec.describe SvgSprite do
   end
 
   it "can search for a specific FA icon" do
-    expect(SvgSprite.search("fa-heart")).to match(/heart/)
     expect(SvgSprite.search("poo-storm")).to match(/poo-storm/)
     expect(SvgSprite.search("this-is-not-an-icon")).to eq(false)
   end
 
   it "can get a raw SVG for an icon" do
-    expect(SvgSprite.raw_svg("fa-heart")).to match(/svg.*svg/) # SVG inside SVG
+    expect(SvgSprite.raw_svg("heart")).to match(/svg.*svg/) # SVG inside SVG
     expect(SvgSprite.raw_svg("this-is-not-an-icon")).to eq("")
   end
 
@@ -200,16 +199,16 @@ RSpec.describe SvgSprite do
   end
 
   it "includes icons from SiteSettings" do
-    SiteSetting.svg_icon_subset = "blender|drafting-compass|fab-bandcamp"
+    SiteSetting.svg_icon_subset = "blender|compass-drafting|fab-bandcamp"
 
     all_icons = SvgSprite.all_icons
     expect(all_icons).to include("blender")
-    expect(all_icons).to include("drafting-compass")
+    expect(all_icons).to include("compass-drafting")
     expect(all_icons).to include("fab-bandcamp")
 
     SiteSetting.svg_icon_subset = nil
     SvgSprite.expire_cache
-    expect(SvgSprite.all_icons).not_to include("drafting-compass")
+    expect(SvgSprite.all_icons).not_to include("compass-drafting")
 
     # does not fail on non-string setting
     SiteSetting.svg_icon_subset = false

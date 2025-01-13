@@ -98,7 +98,13 @@ module Onebox
           ).first
         favicon = favicon.nil? ? nil : (favicon["href"].nil? ? nil : favicon["href"].strip)
 
-        Onebox::Helpers.get_absolute_image_url(favicon, url)
+        return nil if favicon.blank?
+
+        absolute_url = Onebox::Helpers.get_absolute_image_url(favicon, url)
+
+        return nil if absolute_url.length > UrlHelper::MAX_URL_LENGTH
+
+        absolute_url
       end
 
       def get_description
@@ -154,8 +160,8 @@ module Onebox
       end
 
       def set_from_normalizer_data(normalizer)
-        normalizer.data.each do |k, v|
-          v = normalizer.send(k)
+        normalizer.data.each do |k, _|
+          v = normalizer.public_send(k)
           @raw[k] ||= v unless v.nil?
         end
       end

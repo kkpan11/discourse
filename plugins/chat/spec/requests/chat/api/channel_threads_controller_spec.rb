@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
 RSpec.describe Chat::Api::ChannelThreadsController do
   fab!(:current_user) { Fabricate(:user) }
   fab!(:public_channel) { Fabricate(:chat_channel, threading_enabled: true) }
@@ -9,7 +7,7 @@ RSpec.describe Chat::Api::ChannelThreadsController do
   before do
     SiteSetting.chat_enabled = true
     SiteSetting.chat_allowed_groups = Group::AUTO_GROUPS[:everyone]
-    Group.refresh_automatic_groups!
+
     sign_in(current_user)
   end
 
@@ -61,6 +59,15 @@ RSpec.describe Chat::Api::ChannelThreadsController do
         end
       end
 
+      context "when channel was deleted" do
+        before { thread.channel.trash! }
+
+        it "returns 403" do
+          get "/chat/api/channels/#{thread.channel_id}/threads/#{thread.id}"
+          expect(response.status).to eq(403)
+        end
+      end
+
       context "when user cannot access the channel" do
         before do
           thread.channel.update!(chatable: Fabricate(:private_category, group: Fabricate(:group)))
@@ -84,9 +91,9 @@ RSpec.describe Chat::Api::ChannelThreadsController do
   end
 
   describe "index" do
-    fab!(:thread_1) { Fabricate(:chat_thread, channel: public_channel) }
-    fab!(:thread_2) { Fabricate(:chat_thread, channel: public_channel) }
-    fab!(:thread_3) { Fabricate(:chat_thread, channel: public_channel) }
+    fab!(:thread_1) { Fabricate(:chat_thread, channel: public_channel, with_replies: 1) }
+    fab!(:thread_2) { Fabricate(:chat_thread, channel: public_channel, with_replies: 1) }
+    fab!(:thread_3) { Fabricate(:chat_thread, channel: public_channel, with_replies: 1) }
     fab!(:message_1) do
       Fabricate(
         :chat_message,
@@ -107,47 +114,47 @@ RSpec.describe Chat::Api::ChannelThreadsController do
     end
 
     before do
+      public_channel.add(current_user)
       thread_1.add(current_user)
       thread_3.add(current_user)
     end
 
-    it "returns the threads the user has sent messages in for the channel" do
+    it "returns the threads of the channel" do
       get "/chat/api/channels/#{public_channel.id}/threads"
       expect(response.status).to eq(200)
       expect(response.parsed_body["threads"].map { |thread| thread["id"] }).to eq(
-        [thread_3.id, thread_1.id],
+        [thread_3.id, thread_2.id, thread_1.id],
       )
     end
 
     it "has preloaded chat mentions and users for the thread original message" do
-      thread_1.original_message.update!(
-        message: "@#{current_user.username} hello and @#{thread_2.original_message_user.username}!",
+      public_channel.add(thread_1.original_message.user)
+      update_message!(
+        thread_1.original_message,
+        user: thread_1.original_message.user,
+        text: "@#{current_user.username} hello and @#{thread_2.original_message_user.username}!",
       )
-      thread_1.original_message.rebake!
-      thread_1.original_message.create_mentions
 
       get "/chat/api/channels/#{public_channel.id}/threads"
       expect(response.status).to eq(200)
-      expect(
+
+      mentioned_users =
         response.parsed_body["threads"]
           .find { |thread| thread["id"] == thread_1.id }
-          .dig("original_message", "mentioned_users"),
-      ).to eq(
-        [
-          {
-            "avatar_template" => User.system_avatar_template(current_user.username),
-            "id" => current_user.id,
-            "name" => current_user.name,
-            "username" => current_user.username,
-          },
-          {
-            "avatar_template" =>
-              User.system_avatar_template(thread_2.original_message_user.username),
-            "id" => thread_2.original_message_user.id,
-            "name" => thread_2.original_message_user.name,
-            "username" => thread_2.original_message_user.username,
-          },
-        ],
+          .dig("original_message", "mentioned_users")
+      expect(mentioned_users.count).to be(2)
+      expect(mentioned_users[0]).to include(
+        "avatar_template" => User.system_avatar_template(current_user.username),
+        "id" => current_user.id,
+        "name" => current_user.name,
+        "username" => current_user.username,
+      )
+      second_user = thread_2.original_message_user
+      expect(mentioned_users[1]).to include(
+        "avatar_template" => User.system_avatar_template(second_user.username),
+        "id" => second_user.id,
+        "name" => second_user.name,
+        "username" => second_user.username,
       )
     end
 
@@ -168,6 +175,13 @@ RSpec.describe Chat::Api::ChannelThreadsController do
       it "returns 404" do
         get "/chat/api/channels/#{public_channel.id}/threads"
         expect(response.status).to eq(404)
+      end
+    end
+
+    context "when params are invalid" do
+      it "returns a 400" do
+        get "/chat/api/channels/#{public_channel.id}/threads?limit=9999"
+        expect(response.status).to eq(400)
       end
     end
   end
@@ -246,7 +260,7 @@ RSpec.describe Chat::Api::ChannelThreadsController do
     context "when channel does not exist" do
       it "returns 404" do
         channel_1.destroy!
-        post "/chat/api/channels/#{channel_id}", params: params
+        post "/chat/api/channels/#{channel_id}/threads", params: params
 
         expect(response.status).to eq(404)
       end

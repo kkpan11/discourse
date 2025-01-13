@@ -3,18 +3,18 @@
 require "csv"
 
 RSpec.describe Jobs::ExportUserArchive do
-  fab!(:user) { Fabricate(:user, username: "john_doe") }
+  fab!(:user) { Fabricate(:user, username: "john_doe", refresh_auto_groups: true) }
   fab!(:user2) { Fabricate(:user) }
   let(:extra) { {} }
   let(:job) do
     j = Jobs::ExportUserArchive.new
-    j.current_user = user
+    j.archive_for_user = user
     j.extra = extra
     j
   end
   let(:component) { raise "component not set" }
 
-  fab!(:admin) { Fabricate(:admin) }
+  fab!(:admin) { Fabricate(:admin, refresh_auto_groups: true) }
   fab!(:category) { Fabricate(:category_with_definition, name: "User Archive Category") }
   fab!(:subcategory) { Fabricate(:category_with_definition, parent_category_id: category.id) }
   fab!(:topic) { Fabricate(:topic, category: category) }
@@ -114,6 +114,42 @@ RSpec.describe Jobs::ExportUserArchive do
       expect(system_message.title).to eq(
         I18n.t("system_messages.csv_export_failed.subject_template"),
       )
+    end
+
+    context "with a requesting_user_id that is not the user being exported" do
+      it "raises an error when not admin" do
+        expect do
+          Jobs::ExportUserArchive.new.execute(user_id: user.id, requesting_user_id: user2.id)
+        end.to raise_error(
+          Discourse::InvalidParameters,
+          "requesting_user_id: can only be admins when specified",
+        )
+      end
+
+      it "creates the upload and sends the message to the specified requesting_user_id" do
+        expect do Jobs::ExportUserArchive.new.execute(user_id: user2.id) end.to change {
+          Upload.count
+        }.by(1)
+
+        system_message = user2.topics_allowed.last
+
+        expect(system_message.title).to eq(
+          I18n.t(
+            "system_messages.csv_export_succeeded.subject_template",
+            export_title: "User Archive",
+          ),
+        )
+
+        upload = system_message.first_post.uploads.first
+
+        expect(system_message.first_post.raw).to eq(
+          I18n.t(
+            "system_messages.csv_export_succeeded.text_body_template",
+            download_link:
+              "[#{upload.original_filename}|attachment](#{upload.short_url}) (#{upload.human_filesize})",
+          ).chomp,
+        )
+      end
     end
   end
 

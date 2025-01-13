@@ -9,6 +9,7 @@ class ApplicationController < ActionController::Base
   include GlobalPath
   include Hijack
   include ReadOnlyMixin
+  include ThemeResolver
   include VaryHeader
 
   attr_reader :theme_id
@@ -29,7 +30,6 @@ class ApplicationController < ActionController::Base
     end
   end
 
-  before_action :rate_limit_crawlers
   before_action :check_readonly_mode
   before_action :handle_theme
   before_action :set_current_user_for_logs
@@ -41,6 +41,7 @@ class ApplicationController < ActionController::Base
   before_action :authorize_mini_profiler
   before_action :redirect_to_login_if_required
   before_action :block_if_requires_login
+  before_action :redirect_to_profile_if_required
   before_action :preload_json
   before_action :check_xhr
   after_action :add_readonly_header
@@ -52,10 +53,11 @@ class ApplicationController < ActionController::Base
                if: -> { is_feed_request? || !SiteSetting.allow_index_in_robots_txt }
   after_action :add_noindex_header_to_non_canonical, if: :spa_boot_request?
   after_action :set_cross_origin_opener_policy_header, if: :spa_boot_request?
-  around_action :link_preload, if: -> { spa_boot_request? && GlobalSetting.preload_link_header }
+  after_action :clean_xml, if: :is_feed_response?
+  after_action :add_early_hint_header, if: -> { spa_boot_request? }
 
-  HONEYPOT_KEY ||= "HONEYPOT_KEY"
-  CHALLENGE_KEY ||= "CHALLENGE_KEY"
+  HONEYPOT_KEY = "HONEYPOT_KEY"
+  CHALLENGE_KEY = "CHALLENGE_KEY"
 
   layout :set_layout
 
@@ -122,6 +124,7 @@ class ApplicationController < ActionController::Base
 
   class RenderEmpty < StandardError
   end
+
   class PluginDisabled < StandardError
   end
 
@@ -337,7 +340,7 @@ class ApplicationController < ActionController::Base
         return render plain: message, status: status_code
       end
       with_resolved_locale do
-        error_page_opts[:layout] = (opts[:include_ember] && @preloaded) ? "application" : "no_ember"
+        error_page_opts[:layout] = (opts[:include_ember] && @preloaded) ? set_layout : "no_ember"
         render html: build_not_found_page(error_page_opts)
       end
     end
@@ -362,7 +365,7 @@ class ApplicationController < ActionController::Base
       Logster.add_to_env(request.env, "username", current_user.username)
       response.headers["X-Discourse-Username"] = current_user.username
     end
-    response.headers["X-Discourse-Route"] = "#{controller_name}/#{action_name}"
+    response.headers["X-Discourse-Route"] = "#{controller_path}/#{action_name}"
   end
 
   def set_mp_snapshot_fields
@@ -462,7 +465,7 @@ class ApplicationController < ActionController::Base
     return unless guardian.can_enable_safe_mode?
 
     safe_mode = params[SAFE_MODE]
-    if safe_mode&.is_a?(String)
+    if safe_mode.is_a?(String)
       safe_mode = safe_mode.split(",")
       request.env[NO_THEMES] = safe_mode.include?(NO_THEMES) || safe_mode.include?(LEGACY_NO_THEMES)
       request.env[NO_PLUGINS] = safe_mode.include?(NO_PLUGINS)
@@ -477,34 +480,7 @@ class ApplicationController < ActionController::Base
     resolve_safe_mode
     return if request.env[NO_THEMES]
 
-    theme_id = nil
-
-    if (preview_theme_id = request[:preview_theme_id]&.to_i) &&
-         guardian.allow_themes?([preview_theme_id], include_preview: true)
-      theme_id = preview_theme_id
-    end
-
-    user_option = current_user&.user_option
-
-    if theme_id.blank?
-      ids, seq = cookies[:theme_ids]&.split("|")
-      id = ids&.split(",")&.map(&:to_i)&.first
-      if id.present? && seq && seq.to_i == user_option&.theme_key_seq.to_i
-        theme_id = id if guardian.allow_themes?([id])
-      end
-    end
-
-    if theme_id.blank?
-      ids = user_option&.theme_ids || []
-      theme_id = ids.first if guardian.allow_themes?(ids)
-    end
-
-    if theme_id.blank? && SiteSetting.default_theme_id != -1 &&
-         guardian.allow_themes?([SiteSetting.default_theme_id])
-      theme_id = SiteSetting.default_theme_id
-    end
-
-    @theme_id = request.env[:resolved_theme_id] = theme_id
+    @theme_id ||= ThemeResolver.resolve_theme_id(request, guardian, current_user)
   end
 
   def guardian
@@ -517,7 +493,7 @@ class ApplicationController < ActionController::Base
   end
 
   def current_homepage
-    current_user&.user_option&.homepage || SiteSetting.anonymous_homepage
+    current_user&.user_option&.homepage || HomepageHelper.resolve(request, current_user)
   end
 
   def serialize_data(obj, serializer, opts = nil)
@@ -631,6 +607,11 @@ class ApplicationController < ActionController::Base
     RateLimiter.new(nil, "second-factor-min-#{user.username}", 6, 1.minute).performed! if user
   end
 
+  def login_method
+    return if current_user.anonymous?
+    current_user.authenticated_with_oauth ? Auth::LOGIN_METHOD_OAUTH : Auth::LOGIN_METHOD_LOCAL
+  end
+
   private
 
   def preload_anonymous_data
@@ -639,8 +620,8 @@ class ApplicationController < ActionController::Base
     store_preloaded("customHTML", custom_html_json)
     store_preloaded("banner", banner_json)
     store_preloaded("customEmoji", custom_emoji)
-    store_preloaded("isReadOnly", @readonly_mode.to_s)
-    store_preloaded("isStaffWritesOnly", @staff_writes_only_mode.to_s)
+    store_preloaded("isReadOnly", get_or_check_readonly_mode.to_json)
+    store_preloaded("isStaffWritesOnly", get_or_check_staff_writes_only_mode.to_json)
     store_preloaded("activatedThemes", activated_themes_json)
   end
 
@@ -652,7 +633,7 @@ class ApplicationController < ActionController::Base
           current_user,
           scope: guardian,
           root: false,
-          navigation_menu_param: params[:navigation_menu],
+          login_method: login_method,
         ),
       ),
     )
@@ -665,8 +646,26 @@ class ApplicationController < ActionController::Base
     store_preloaded("topicTrackingStates", MultiJson.dump(hash[:data]))
     store_preloaded("topicTrackingStateMeta", MultiJson.dump(hash[:meta]))
 
-    # This is used in the wizard so we can preload fonts using the FontMap JS API.
-    store_preloaded("fontMap", MultiJson.dump(load_font_map)) if current_user.admin?
+    if current_user.admin?
+      # This is used in the wizard so we can preload fonts using the FontMap JS API.
+      store_preloaded("fontMap", MultiJson.dump(load_font_map))
+
+      # Used to show plugin-specific admin routes in the sidebar.
+      store_preloaded(
+        "visiblePlugins",
+        MultiJson.dump(
+          Discourse
+            .plugins_sorted_by_name(enabled_only: false)
+            .map do |plugin|
+              {
+                name: plugin.name.downcase,
+                admin_route: plugin.full_admin_route,
+                enabled: plugin.enabled?,
+              }
+            end,
+        ),
+      )
+    end
   end
 
   def custom_html_json
@@ -784,9 +783,7 @@ class ApplicationController < ActionController::Base
   def check_xhr
     # bypass xhr check on PUT / POST / DELETE provided api key is there, otherwise calling api is annoying
     return if !request.get? && (is_api? || is_user_api?)
-    unless ((request.format && request.format.json?) || request.xhr?)
-      raise ApplicationController::RenderEmpty.new
-    end
+    raise ApplicationController::RenderEmpty.new if !request.format&.json? && !request.xhr?
   end
 
   def apply_cdn_headers
@@ -818,7 +815,7 @@ class ApplicationController < ActionController::Base
   end
 
   def ensure_logged_in
-    raise Discourse::NotLoggedIn.new unless current_user.present?
+    raise Discourse::NotLoggedIn.new if current_user.blank?
   end
 
   def ensure_staff
@@ -871,7 +868,7 @@ class ApplicationController < ActionController::Base
         return render plain: I18n.t("user_api_key.invalid_public_key")
       end
 
-      if UserApiKey.invalid_auth_redirect?(params[:auth_redirect])
+      if UserApiKeyClient.invalid_auth_redirect?(params[:auth_redirect])
         return render plain: I18n.t("user_api_key.invalid_auth_redirect")
       end
 
@@ -902,7 +899,6 @@ class ApplicationController < ActionController::Base
   end
 
   def should_enforce_2fa?
-    disqualified_from_2fa_enforcement = request.format.json? || is_api? || current_user.anonymous?
     enforcing_2fa =
       (
         (SiteSetting.enforce_second_factor == "staff" && current_user.staff?) ||
@@ -910,6 +906,42 @@ class ApplicationController < ActionController::Base
       )
     !disqualified_from_2fa_enforcement && enforcing_2fa &&
       !current_user.has_any_second_factor_methods_enabled?
+  end
+
+  def disqualified_from_2fa_enforcement
+    request.format.json? || is_api? || current_user.anonymous? ||
+      (
+        !SiteSetting.enforce_second_factor_on_external_auth &&
+          login_method == Auth::LOGIN_METHOD_OAUTH
+      )
+  end
+
+  def redirect_to_profile_if_required
+    return if request.format.json?
+    return if !current_user
+    return if !current_user.needs_required_fields_check?
+
+    if current_user.populated_required_custom_fields?
+      current_user.bump_required_fields_version
+      return
+    end
+
+    redirect_path = path("/u/#{current_user.encoded_username}/preferences/profile")
+    second_factor_path = path("/u/#{current_user.encoded_username}/preferences/second-factor")
+    allowed_paths = [redirect_path, second_factor_path, path("/admin"), path("/safe-mode")]
+    if allowed_paths.none? { |p| request.fullpath.start_with?(p) }
+      rate_limiter = RateLimiter.new(current_user, "redirect_to_required_fields_log", 1, 24.hours)
+
+      if rate_limiter.performed!(raise_error: false)
+        UserHistory.create!(
+          action: UserHistory.actions[:redirected_to_required_fields],
+          acting_user_id: current_user.id,
+        )
+      end
+
+      redirect_to path(redirect_path)
+      nil
+    end
   end
 
   def build_not_found_page(opts = {})
@@ -968,6 +1000,10 @@ class ApplicationController < ActionController::Base
     request.format.atom? || request.format.rss?
   end
 
+  def is_feed_response?
+    request.get? && response&.content_type&.match?(/(rss|atom)/)
+  end
+
   def add_noindex_header
     if request.get? && !response.headers["X-Robots-Tag"]
       if SiteSetting.allow_index_in_robots_txt
@@ -987,7 +1023,10 @@ class ApplicationController < ActionController::Base
   end
 
   def set_cross_origin_opener_policy_header
-    if SiteSetting.cross_origin_opener_policy_header != "unsafe-none"
+    if current_user.present? && SiteSetting.cross_origin_opener_unsafe_none_groups_map.any? &&
+         current_user.in_any_groups?(SiteSetting.cross_origin_opener_unsafe_none_groups_map)
+      response.headers["Cross-Origin-Opener-Policy"] = "unsafe-none"
+    else
       response.headers["Cross-Origin-Opener-Policy"] = SiteSetting.cross_origin_opener_policy_header
     end
   end
@@ -1031,31 +1070,15 @@ class ApplicationController < ActionController::Base
     Theme.where(id: ids).pluck(:id, :name).to_h.to_json
   end
 
-  def rate_limit_crawlers
-    return if current_user.present?
-    return if SiteSetting.slow_down_crawler_user_agents.blank?
+  def run_second_factor!(action_class, action_data: nil, target_user: current_user)
+    if current_user && target_user != current_user
+      # Anon can run 2fa against another target, but logged-in users should not.
+      # This should be validated at the `run_second_factor!` call site.
+      raise "running 2fa against another user is not allowed"
+    end
 
-    user_agent = request.user_agent&.downcase
-    return if user_agent.blank?
-
-    SiteSetting
-      .slow_down_crawler_user_agents
-      .downcase
-      .split("|")
-      .each do |crawler|
-        if user_agent.include?(crawler)
-          key = "#{crawler}_crawler_rate_limit"
-          limiter =
-            RateLimiter.new(nil, key, 1, SiteSetting.slow_down_crawler_rate, error_code: key)
-          limiter.performed!
-          break
-        end
-      end
-  end
-
-  def run_second_factor!(action_class, action_data = nil)
-    action = action_class.new(guardian, request, action_data)
-    manager = SecondFactor::AuthManager.new(guardian, action)
+    action = action_class.new(guardian, request, opts: action_data, target_user: target_user)
+    manager = SecondFactor::AuthManager.new(guardian, action, target_user: target_user)
     yield(manager) if block_given?
     result = manager.run!(request, params, secure_session)
 
@@ -1068,10 +1091,25 @@ class ApplicationController < ActionController::Base
     result
   end
 
-  def link_preload
-    @links_to_preload = []
-    yield
-    response.headers["Link"] = @links_to_preload.join(", ") if !@links_to_preload.empty?
+  # We don't actually send 103 Early Hint responses from Discourse. However, upstream proxies can be configured
+  # to cache a response header from the app and use that to send an Early Hint response to future clients.
+  # See 'early_hint_header_mode' and 'early_hint_header_name' Global Setting descriptions for more info.
+  def add_early_hint_header
+    return if GlobalSetting.early_hint_header_mode.nil?
+
+    links = []
+
+    if GlobalSetting.early_hint_header_mode == "preconnect"
+      [GlobalSetting.cdn_url, SiteSetting.s3_cdn_url].each do |url|
+        next if url.blank?
+        base_url = URI.join(url, "/").to_s.chomp("/")
+        links.push("<#{base_url}>; rel=preconnect")
+      end
+    elsif GlobalSetting.early_hint_header_mode == "preload"
+      links.push(*@asset_preload_links)
+    end
+
+    response.headers[GlobalSetting.early_hint_header_name] = links.join(", ") if links.present?
   end
 
   def spa_boot_request?
@@ -1119,5 +1157,13 @@ class ApplicationController < ActionController::Base
     else
       default
     end
+  end
+
+  def clean_xml
+    response.body.gsub!(XmlCleaner::INVALID_CHARACTERS, "")
+  end
+
+  def service_params
+    { params: params.to_unsafe_h, guardian: }
   end
 end

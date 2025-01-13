@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe Post do
-  fab!(:coding_horror) { Fabricate(:coding_horror) }
+  fab!(:coding_horror) { Fabricate(:coding_horror, refresh_auto_groups: true) }
 
   let(:upload_path) { Discourse.store.upload_path }
 
@@ -70,7 +70,8 @@ RSpec.describe Post do
 
   it { is_expected.to rate_limit }
 
-  let(:topic) { Fabricate(:topic) }
+  fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
+  let(:topic) { Fabricate(:topic, user: user) }
   let(:post_args) { { user: topic.user, topic: topic } }
 
   describe "scopes" do
@@ -147,12 +148,12 @@ RSpec.describe Post do
     end
   end
 
-  describe "with_secure_uploads?" do
+  describe "should_secure_uploads?" do
     let(:topic) { Fabricate(:topic) }
     let!(:post) { Fabricate(:post, topic: topic) }
 
     it "returns false if secure uploads is not enabled" do
-      expect(post.with_secure_uploads?).to eq(false)
+      expect(post.should_secure_uploads?).to eq(false)
     end
 
     context "when secure uploads is enabled" do
@@ -166,14 +167,14 @@ RSpec.describe Post do
         before { SiteSetting.login_required = true }
 
         it "returns true" do
-          expect(post.with_secure_uploads?).to eq(true)
+          expect(post.should_secure_uploads?).to eq(true)
         end
 
         context "if secure_uploads_pm_only" do
           before { SiteSetting.secure_uploads_pm_only = true }
 
           it "returns false" do
-            expect(post.with_secure_uploads?).to eq(false)
+            expect(post.should_secure_uploads?).to eq(false)
           end
         end
       end
@@ -183,14 +184,25 @@ RSpec.describe Post do
         before { topic.change_category_to_id(category.id) }
 
         it "returns true" do
-          expect(post.with_secure_uploads?).to eq(true)
+          expect(post.should_secure_uploads?).to eq(true)
+        end
+
+        context "when the topic is deleted" do
+          before do
+            topic.trash!
+            post.reload
+          end
+
+          it "returns true" do
+            expect(post.should_secure_uploads?).to eq(true)
+          end
         end
 
         context "if secure_uploads_pm_only" do
           before { SiteSetting.secure_uploads_pm_only = true }
 
           it "returns false" do
-            expect(post.with_secure_uploads?).to eq(false)
+            expect(post.should_secure_uploads?).to eq(false)
           end
         end
       end
@@ -199,14 +211,22 @@ RSpec.describe Post do
         let(:topic) { Fabricate(:private_message_topic) }
 
         it "returns true" do
-          expect(post.with_secure_uploads?).to eq(true)
+          expect(post.should_secure_uploads?).to eq(true)
+        end
+
+        context "when the topic is deleted" do
+          before { topic.trash! }
+
+          it "returns true" do
+            expect(post.should_secure_uploads?).to eq(true)
+          end
         end
 
         context "if secure_uploads_pm_only" do
           before { SiteSetting.secure_uploads_pm_only = true }
 
           it "returns true" do
-            expect(post.with_secure_uploads?).to eq(true)
+            expect(post.should_secure_uploads?).to eq(true)
           end
         end
       end
@@ -214,9 +234,9 @@ RSpec.describe Post do
   end
 
   describe "flagging helpers" do
-    fab!(:post) { Fabricate(:post) }
+    fab!(:post)
     fab!(:user) { coding_horror }
-    fab!(:admin) { Fabricate(:admin) }
+    fab!(:admin)
 
     it "is_flagged? is accurate" do
       PostActionCreator.off_topic(user, post)
@@ -317,36 +337,6 @@ RSpec.describe Post do
       expect(post_one_image).to be_valid
     end
 
-    it "doesn't allow more than `min_trust_to_post_embedded_media`" do
-      SiteSetting.min_trust_to_post_embedded_media = 4
-      post_one_image.user.trust_level = 3
-      expect(post_one_image).not_to be_valid
-    end
-
-    it "doesn't allow more than `min_trust_to_post_embedded_media` in a quote" do
-      SiteSetting.min_trust_to_post_embedded_media = 4
-      post_one_image.user.trust_level = 3
-      expect(post_image_within_quote).not_to be_valid
-    end
-
-    it "doesn't allow more than `min_trust_to_post_embedded_media` in code" do
-      SiteSetting.min_trust_to_post_embedded_media = 4
-      post_one_image.user.trust_level = 3
-      expect(post_image_within_code).not_to be_valid
-    end
-
-    it "doesn't allow more than `min_trust_to_post_embedded_media` in pre" do
-      SiteSetting.min_trust_to_post_embedded_media = 4
-      post_one_image.user.trust_level = 3
-      expect(post_image_within_pre).not_to be_valid
-    end
-
-    it "doesn't allow more than `min_trust_to_post_embedded_media`" do
-      SiteSetting.min_trust_to_post_embedded_media = 4
-      post_one_image.user.trust_level = 4
-      expect(post_one_image).to be_valid
-    end
-
     it "doesn't count favicons as images" do
       PrettyText.stubs(:cook).returns(post_with_favicon.raw)
       expect(post_with_favicon.embedded_media_count).to eq(0)
@@ -366,6 +356,38 @@ RSpec.describe Post do
 
     it "counts video and audio as embedded media" do
       expect(post_with_two_embedded_media.embedded_media_count).to eq(2)
+    end
+
+    describe "embedded_media_allowed_groups" do
+      it "doesn't allow users outside of `embedded_media_post_allowed_groups`" do
+        SiteSetting.embedded_media_post_allowed_groups = Group::AUTO_GROUPS[:trust_level_4]
+        post_one_image.user.change_trust_level!(3)
+        expect(post_one_image).not_to be_valid
+      end
+
+      it "doesn't allow users outside of `embedded_media_post_allowed_groups` in a quote" do
+        SiteSetting.embedded_media_post_allowed_groups = Group::AUTO_GROUPS[:trust_level_4]
+        post_one_image.user.change_trust_level!(3)
+        expect(post_image_within_quote).not_to be_valid
+      end
+
+      it "doesn't allow users outside of `embedded_media_post_allowed_groups` in code" do
+        SiteSetting.embedded_media_post_allowed_groups = Group::AUTO_GROUPS[:trust_level_4]
+        post_one_image.user.change_trust_level!(3)
+        expect(post_image_within_code).not_to be_valid
+      end
+
+      it "doesn't allow users outside of `embedded_media_post_allowed_groups` in pre" do
+        SiteSetting.embedded_media_post_allowed_groups = Group::AUTO_GROUPS[:trust_level_4]
+        post_one_image.user.change_trust_level!(3)
+        expect(post_image_within_pre).not_to be_valid
+      end
+
+      it "allows users who are in a group in `embedded_media_post_allowed_groups`" do
+        SiteSetting.embedded_media_post_allowed_groups = Group::AUTO_GROUPS[:trust_level_4]
+        post_one_image.user.change_trust_level!(4)
+        expect(post_one_image).to be_valid
+      end
     end
 
     context "with validation" do
@@ -588,29 +610,29 @@ RSpec.describe Post do
         expect(post_two_links).to be_valid
       end
 
-      context "with min_trust_to_post_links" do
+      context "when posting links is limited to certain TL groups" do
         it "considers oneboxes links" do
-          SiteSetting.min_trust_to_post_links = 3
-          post_onebox.user.trust_level = TrustLevel[2]
+          SiteSetting.post_links_allowed_groups = Group::AUTO_GROUPS[:trust_level_3]
+          post_onebox.user.change_trust_level!(TrustLevel[2])
           expect(post_onebox).not_to be_valid
         end
 
         it "considers links within code" do
-          SiteSetting.min_trust_to_post_links = 3
-          post_onebox.user.trust_level = TrustLevel[2]
+          SiteSetting.post_links_allowed_groups = Group::AUTO_GROUPS[:trust_level_3]
+          post_onebox.user.change_trust_level!(TrustLevel[2])
           expect(post_code_link).not_to be_valid
         end
 
-        it "doesn't allow allow links if `min_trust_to_post_links` is not met" do
-          SiteSetting.min_trust_to_post_links = 2
-          post_two_links.user.trust_level = TrustLevel[1]
+        it "doesn't allow allow links if user is not in allowed groups" do
+          SiteSetting.post_links_allowed_groups = Group::AUTO_GROUPS[:trust_level_2]
+          post_two_links.user.change_trust_level!(TrustLevel[1])
           expect(post_one_link).not_to be_valid
         end
 
         it "will skip the check for allowlisted domains" do
           SiteSetting.allowed_link_domains = "www.bbc.co.uk"
-          SiteSetting.min_trust_to_post_links = 2
-          post_two_links.user.trust_level = TrustLevel[1]
+          SiteSetting.post_links_allowed_groups = "12"
+          post_two_links.user.change_trust_level!(TrustLevel[1])
           expect(post_one_link).to be_valid
         end
       end
@@ -694,7 +716,7 @@ RSpec.describe Post do
           SiteSetting.max_mentions_per_post = 1
         end
 
-        it "allows vmax_mentions_per_post mentions" do
+        it "allows max_mentions_per_post mentions" do
           post_with_one_mention.user.trust_level = TrustLevel[1]
           expect(post_with_one_mention).to be_valid
         end
@@ -915,7 +937,7 @@ RSpec.describe Post do
     end
 
     context "with a new reply" do
-      fab!(:topic) { Fabricate(:topic) }
+      fab!(:topic)
       let(:other_user) { coding_horror }
       let(:reply_text) { "[quote=\"Evil Trout, post:1\"]\nhello\n[/quote]\nHmmm!" }
       let!(:post) do
@@ -1005,22 +1027,8 @@ RSpec.describe Post do
     end
   end
 
-  describe "reply_history" do
-    let!(:p1) { Fabricate(:post, post_args) }
-    let!(:p2) { Fabricate(:post, post_args.merge(reply_to_post_number: p1.post_number)) }
-    let!(:p3) { Fabricate(:post, post_args) }
-    let!(:p4) { Fabricate(:post, post_args.merge(reply_to_post_number: p2.post_number)) }
-
-    it "returns the posts in reply to this post" do
-      expect(p4.reply_history).to eq([p1, p2])
-      expect(p4.reply_history(1)).to eq([p2])
-      expect(p3.reply_history).to be_blank
-      expect(p2.reply_history).to eq([p1])
-    end
-  end
-
   describe "reply_ids" do
-    fab!(:topic) { Fabricate(:topic) }
+    fab!(:topic)
     let!(:p1) { Fabricate(:post, topic: topic, post_number: 1) }
     let!(:p2) { Fabricate(:post, topic: topic, post_number: 2, reply_to_post_number: 1) }
     let!(:p3) { Fabricate(:post, topic: topic, post_number: 3) }
@@ -1108,7 +1116,13 @@ RSpec.describe Post do
 
   describe "cooking" do
     let(:post) do
-      Fabricate.build(:post, post_args.merge(raw: "please read my blog http://blog.example.com"))
+      Fabricate.build(
+        :post,
+        post_args.merge(
+          raw: "please read my blog http://blog.example.com",
+          user: Fabricate(:user, refresh_auto_groups: true),
+        ),
+      )
     end
 
     it "should unconditionally follow links for staff" do
@@ -1140,20 +1154,30 @@ RSpec.describe Post do
       expect(post.cooked).to match(/noopener nofollow ugc/)
     end
 
-    it "passes the last_editor_id as the markdown user_id option" do
+    it "passes the last_editor_id as the markdown user_id option and post_id" do
       post.save
       post.reload
       PostAnalyzer
         .any_instance
         .expects(:cook)
-        .with(post.raw, { cook_method: Post.cook_methods[:regular], user_id: post.last_editor_id })
+        .with(
+          post.raw,
+          {
+            cook_method: Post.cook_methods[:regular],
+            user_id: post.last_editor_id,
+            post_id: post.id,
+          },
+        )
       post.cook(post.raw)
       user_editor = Fabricate(:user)
       post.update!(last_editor_id: user_editor.id)
       PostAnalyzer
         .any_instance
         .expects(:cook)
-        .with(post.raw, { cook_method: Post.cook_methods[:regular], user_id: user_editor.id })
+        .with(
+          post.raw,
+          { cook_method: Post.cook_methods[:regular], user_id: user_editor.id, post_id: post.id },
+        )
       post.cook(post.raw)
     end
 
@@ -1392,41 +1416,10 @@ RSpec.describe Post do
     ensure
       InlineOneboxer.invalidate("http://testonebox.com/vvf22")
     end
-
-    context "when secure uploads are enabled" do
-      before do
-        setup_s3
-        SiteSetting.secure_uploads = true
-      end
-
-      it "does not enqueue job to update secure status by default" do
-        post = create_post
-        expect_not_enqueued_with(
-          job: :update_post_uploads_secure_status,
-          args: {
-            post_id: post.id,
-            source: "post rebake",
-          },
-        ) { post.rebake! }
-      end
-
-      context "when passing update_upload_security: true option" do
-        it "does enqueue job to update secure status" do
-          post = create_post
-          expect_enqueued_with(
-            job: :update_post_uploads_secure_status,
-            args: {
-              post_id: post.id,
-              source: "post rebake",
-            },
-          ) { post.rebake!(update_upload_security: true) }
-        end
-      end
-    end
   end
 
   describe "#set_owner" do
-    fab!(:post) { Fabricate(:post) }
+    fab!(:post)
 
     it "will change owner of a post correctly" do
       post.set_owner(coding_horror, Discourse.system_user)
@@ -1493,7 +1486,7 @@ RSpec.describe Post do
   end
 
   describe "#hide!" do
-    fab!(:post) { Fabricate(:post) }
+    fab!(:post)
 
     after { Discourse.redis.flushdb }
 
@@ -1503,6 +1496,19 @@ RSpec.describe Post do
       expect { post.hide!(PostActionType.types[:off_topic]) }.to change { post.reload.hidden }.from(
         false,
       ).to(true)
+    end
+
+    it "should inform the user when custom flag" do
+      custom_flag = Fabricate(:flag, name: "custom flag")
+      post.hide!(PostActionType.types[:custom_custom_flag])
+
+      jobs = Jobs::SendSystemMessage.jobs
+      expect(jobs.size).to eq(1)
+
+      Jobs::SendSystemMessage.new.execute(jobs[0]["args"][0].with_indifferent_access)
+      expect(Post.last.raw).to match("custom flag")
+
+      custom_flag.destroy!
     end
 
     it "should decrease user_stat topic_count for first post" do
@@ -1521,7 +1527,7 @@ RSpec.describe Post do
   end
 
   describe "#unhide!" do
-    fab!(:post) { Fabricate(:post) }
+    fab!(:post)
 
     before { SiteSetting.unique_posts_mins = 5 }
 
@@ -1543,6 +1549,25 @@ RSpec.describe Post do
 
       expect(post.hidden).to eq(false)
       expect(hidden_topic.visible).to eq(true)
+      expect(hidden_topic.visibility_reason_id).to eq(Topic.visibility_reasons[:op_unhidden])
+    end
+
+    it "will not unhide the topic if the topic visibility_reason_id is not op_flag_threshold_reached" do
+      hidden_topic =
+        Fabricate(
+          :topic,
+          visible: false,
+          visibility_reason_id: Topic.visibility_reasons[:manually_unlisted],
+        )
+      post = create_post(topic: hidden_topic)
+      post.update_columns(hidden: true, hidden_at: Time.now, hidden_reason_id: 1)
+      post.reload
+
+      expect(post.hidden).to eq(true)
+      post.unhide!
+
+      hidden_topic.reload
+      expect(hidden_topic.visible).to eq(false)
     end
 
     it "should increase user_stat topic_count for first post" do
@@ -1659,6 +1684,7 @@ RSpec.describe Post do
 
   describe "uploads" do
     fab!(:video_upload) { Fabricate(:upload, extension: "mp4") }
+    fab!(:video_upload_2) { Fabricate(:upload, extension: "mp4") }
     fab!(:image_upload) { Fabricate(:upload) }
     fab!(:audio_upload) { Fabricate(:upload, extension: "ogg") }
     fab!(:attachment_upload) { Fabricate(:upload, extension: "csv") }
@@ -1667,6 +1693,7 @@ RSpec.describe Post do
 
     let(:base_url) { "#{Discourse.base_url_no_prefix}#{Discourse.base_path}" }
     let(:video_url) { "#{base_url}#{video_upload.url}" }
+    let(:video_2_url) { "#{base_url}#{video_upload_2.url}" }
     let(:audio_url) { "#{base_url}#{audio_upload.url}" }
 
     let(:raw_multiple) { <<~RAW }
@@ -1684,6 +1711,16 @@ RSpec.describe Post do
         <source src="#{audio_url}">
         <a href="#{audio_url}">#{audio_url}</a>
       </audio>
+
+      <div class="video-placeholder-container" data-video-src="#{video_2_url}" dir="ltr" style="cursor: pointer;">
+        <div class="video-placeholder-wrapper">
+          <div class="video-placeholder-overlay">
+            <svg class="fa d-icon d-icon-play svg-icon svg-string" xmlns="http://www.w3.org/2000/svg">
+              <use href="#play"></use>
+            </svg>
+          </div>
+        </div>
+      </div>
       RAW
 
     let(:post) { Fabricate(:post, raw: raw_multiple) }
@@ -1692,7 +1729,7 @@ RSpec.describe Post do
       post.link_post_uploads
 
       post.trash!
-      expect(UploadReference.count).to eq(6)
+      expect(UploadReference.count).to eq(7)
 
       post.destroy!
       expect(UploadReference.count).to eq(0)
@@ -1704,6 +1741,7 @@ RSpec.describe Post do
 
         expect(UploadReference.where(target: post).pluck(:upload_id)).to contain_exactly(
           video_upload.id,
+          video_upload_2.id,
           image_upload.id,
           audio_upload.id,
           attachment_upload.id,
@@ -1753,7 +1791,7 @@ RSpec.describe Post do
     end
 
     describe "#update_uploads_secure_status" do
-      fab!(:user) { Fabricate(:user, trust_level: 0) }
+      fab!(:user) { Fabricate(:user, trust_level: TrustLevel[0]) }
 
       let(:raw) { <<~RAW }
         <a href="#{attachment_upload.url}">Link</a>
@@ -1932,6 +1970,7 @@ RSpec.describe Post do
       upload5 = Fabricate(:upload)
       upload6 = Fabricate(:video_upload)
       upload7 = Fabricate(:upload, extension: "vtt")
+      upload8 = Fabricate(:video_upload)
 
       set_cdn_url "https://awesome.com/somepath"
 
@@ -1951,6 +1990,16 @@ RSpec.describe Post do
         <source src="#{Discourse.base_url}#{upload6.url}" type="video/mp4" />
         <track src="#{Discourse.base_url}#{upload7.url}" label="English" kind="subtitles" srclang="en" default />
       </video>
+
+      <div class="video-placeholder-container" data-video-src="#{Discourse.base_url}#{upload8.url}" dir="ltr" style="cursor: pointer;">
+        <div class="video-placeholder-wrapper">
+          <div class="video-placeholder-overlay">
+            <svg class="fa d-icon d-icon-play svg-icon svg-string" xmlns="http://www.w3.org/2000/svg">
+              <use href="#play"></use>
+            </svg>
+          </div>
+        </div>
+      </div>
       RAW
 
       urls = []
@@ -1969,6 +2018,7 @@ RSpec.describe Post do
         "#{Discourse.base_url}#{upload5.url}",
         "#{Discourse.base_url}#{upload6.url}",
         "#{Discourse.base_url}#{upload7.url}",
+        "#{Discourse.base_url}#{upload8.url}",
       )
 
       expect(paths).to contain_exactly(
@@ -1979,6 +2029,7 @@ RSpec.describe Post do
         upload5.url,
         upload6.url,
         upload7.url,
+        upload8.url,
       )
     end
 
@@ -2043,6 +2094,25 @@ RSpec.describe Post do
         )
       post.each_upload_url { |src, _, _| urls << src }
       expect(urls).to be_empty
+    end
+
+    it "should skip external URLs following the `/uploads/short-url` pattern if a host is present and the host is not the configured host" do
+      upload = Fabricate(:upload)
+
+      raw = <<~RAW
+      [Upload link with Discourse.base_url](#{Discourse.base_url}/uploads/short-url/#{upload.sha1}.#{upload.extension})
+      [Upload link without Discourse.base_url](https://some.other.host/uploads/short-url/#{upload.sha1}.#{upload.extension})
+      [Upload link without host](/uploads/short-url/#{upload.sha1}.#{upload.extension})
+      RAW
+
+      post = Fabricate(:post, raw: raw)
+      urls = []
+      post.each_upload_url { |src, _, _| urls << src }
+
+      expect(urls).to contain_exactly(
+        "#{Discourse.base_url}/uploads/short-url/#{upload.sha1}.#{upload.extension}",
+        "/uploads/short-url/#{upload.sha1}.#{upload.extension}",
+      )
     end
 
     it "skip S3 cdn urls with different path" do
@@ -2121,8 +2191,8 @@ RSpec.describe Post do
   end
 
   describe "#cannot_permanently_delete_reason" do
-    fab!(:post) { Fabricate(:post) }
-    fab!(:admin) { Fabricate(:admin) }
+    fab!(:post)
+    fab!(:admin)
 
     before do
       freeze_time
@@ -2166,9 +2236,31 @@ RSpec.describe Post do
     end
   end
 
+  describe "relative_url" do
+    it "returns the correct post url with subfolder install" do
+      set_subfolder "/forum"
+      post = Fabricate(:post)
+
+      expect(post.relative_url).to eq(
+        "/forum/t/#{post.topic.slug}/#{post.topic.id}/#{post.post_number}",
+      )
+    end
+  end
+
+  describe "full_url" do
+    it "returns the correct post url with subfolder install" do
+      set_subfolder "/forum"
+      post = Fabricate(:post)
+
+      expect(post.full_url).to eq(
+        "#{Discourse.base_url_no_prefix}/forum/t/#{post.topic.slug}/#{post.topic.id}/#{post.post_number}",
+      )
+    end
+  end
+
   describe "public_posts_count_per_day" do
     before do
-      freeze_time DateTime.parse("2017-03-01 12:00")
+      freeze_time_safe
 
       Fabricate(:post)
       Fabricate(:post, created_at: 1.day.ago)

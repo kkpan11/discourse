@@ -3,8 +3,9 @@
 require "net/imap"
 
 class Group < ActiveRecord::Base
-  # TODO(2021-05-26): remove
-  self.ignored_columns = %w[flair_url]
+  # TODO: Remove flair_url when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
+  # TODO: Remove smtp_ssl when db/post_migrate/20240717053710_drop_groups_smtp_ssl has been promoted to pre-deploy
+  self.ignored_columns = %w[flair_url smtp_ssl]
 
   include HasCustomFields
   include AnonCacheInvalidator
@@ -15,6 +16,7 @@ class Group < ActiveRecord::Base
   self.preloaded_custom_field_names = Set.new
 
   has_many :category_groups, dependent: :destroy
+  has_many :category_moderation_groups, dependent: :destroy
   has_many :group_users, dependent: :destroy
   has_many :group_requests, dependent: :destroy
   has_many :group_mentions, dependent: :destroy
@@ -23,14 +25,11 @@ class Group < ActiveRecord::Base
   has_many :group_archived_messages, dependent: :destroy
 
   has_many :categories, through: :category_groups
+  has_many :moderation_categories, through: :category_moderation_groups, source: :category
   has_many :users, through: :group_users
+  has_many :human_users, -> { human_users }, through: :group_users, source: :user
   has_many :requesters, through: :group_requests, source: :user
   has_many :group_histories, dependent: :destroy
-  has_many :category_reviews,
-           class_name: "Category",
-           foreign_key: :reviewable_by_group_id,
-           dependent: :nullify
-  has_many :reviewables, foreign_key: :reviewable_by_group_id, dependent: :nullify
   has_many :group_category_notification_defaults, dependent: :destroy
   has_many :group_tag_notification_defaults, dependent: :destroy
   has_many :associated_groups, through: :group_associated_groups, dependent: :destroy
@@ -77,10 +76,6 @@ class Group < ActiveRecord::Base
 
   def expire_imap_mailbox_cache
     Discourse.cache.delete("group_imap_mailboxes_#{self.id}")
-  end
-
-  def remove_review_groups
-    Category.where(review_group_id: self.id).update_all(review_group_id: nil)
   end
 
   validate :name_format_validator
@@ -143,6 +138,19 @@ class Group < ActiveRecord::Base
 
   def self.visibility_levels
     @visibility_levels = Enum.new(public: 0, logged_on_users: 1, members: 2, staff: 3, owners: 4)
+  end
+
+  def self.smtp_ssl_modes
+    @visibility_levels = Enum.new(none: 0, ssl_tls: 1, starttls: 2)
+  end
+
+  def self.auto_groups_between(lower, upper)
+    lower_group = Group::AUTO_GROUPS[lower.to_sym]
+    upper_group = Group::AUTO_GROUPS[upper.to_sym]
+
+    return [] if lower_group.blank? || upper_group.blank?
+
+    (lower_group..upper_group).to_a & AUTO_GROUPS.values
   end
 
   validates :mentionable_level, inclusion: { in: ALIAS_LEVELS.values }
@@ -420,29 +428,7 @@ class Group < ActiveRecord::Base
 
     result = guardian.filter_allowed_categories(result)
     result = result.where("posts.id < ?", opts[:before_post_id].to_i) if opts[:before_post_id]
-    result.order("posts.created_at desc")
-  end
-
-  def messages_for(guardian, opts = nil)
-    opts ||= {}
-
-    result =
-      Post
-        .includes(:user, :topic, topic: :category)
-        .references(:posts, :topics, :category)
-        .where("topics.archetype = ?", Archetype.private_message)
-        .where(post_type: Post.types[:regular])
-        .where(
-          "topics.id IN (SELECT topic_id FROM topic_allowed_groups WHERE group_id = ?)",
-          self.id,
-        )
-
-    if opts[:category_id].present?
-      result = result.where("topics.category_id = ?", opts[:category_id].to_i)
-    end
-
-    result = guardian.filter_allowed_categories(result)
-    result = result.where("posts.id < ?", opts[:before_post_id].to_i) if opts[:before_post_id]
+    result = result.where("posts.created_at < ?", opts[:before].to_datetime) if opts[:before]
     result.order("posts.created_at desc")
   end
 
@@ -463,18 +449,31 @@ class Group < ActiveRecord::Base
 
     result = guardian.filter_allowed_categories(result)
     result = result.where("posts.id < ?", opts[:before_post_id].to_i) if opts[:before_post_id]
+    result = result.where("posts.created_at < ?", opts[:before].to_datetime) if opts[:before]
     result.order("posts.created_at desc")
   end
 
   def self.trust_group_ids
-    (10..19).to_a
+    Group.auto_groups_between(:trust_level_0, :trust_level_4).to_a
+  end
+
+  class GroupPmUserLimitExceededError < StandardError
   end
 
   def set_message_default_notification_levels!(topic, ignore_existing: false)
+    if user_count > SiteSetting.group_pm_user_limit
+      raise GroupPmUserLimitExceededError,
+            I18n.t(
+              "groups.errors.default_notification_level_users_limit",
+              count: SiteSetting.group_pm_user_limit,
+              group_name: name,
+            )
+    end
+
     group_users
       .pluck(:user_id, :notification_level)
       .each do |user_id, notification_level|
-        next if user_id == -1
+        next if user_id == Discourse::SYSTEM_USER_ID
         next if user_id == topic.user_id
         next if ignore_existing && TopicUser.where(user_id: user_id, topic_id: topic.id).exists?
 
@@ -503,6 +502,11 @@ class Group < ActiveRecord::Base
     end
   end
 
+  def self.can_use_name?(name, group)
+    UsernameValidator.new(name).valid_format? &&
+      (group.name == name || !User.username_exists?(name))
+  end
+
   def self.refresh_automatic_group!(name)
     return unless id = AUTO_GROUPS[name]
 
@@ -520,9 +524,16 @@ class Group < ActiveRecord::Base
 
     # don't allow shoddy localization to break this
     localized_name = I18n.t("groups.default_names.#{name}", locale: SiteSetting.default_locale)
-    validator = UsernameValidator.new(localized_name)
+    default_name = I18n.t("groups.default_names.#{name}")
 
-    group.name = localized_name if validator.valid_format? && !User.username_exists?(localized_name)
+    group.name =
+      if can_use_name?(localized_name, group)
+        localized_name
+      elsif can_use_name?(default_name, group)
+        default_name
+      else
+        name.to_s
+      end
 
     # the everyone group is special, it can include non-users so there is no
     # way to have the membership in a table
@@ -543,13 +554,13 @@ class Group < ActiveRecord::Base
     remove_subquery =
       case name
       when :admins
-        "SELECT id FROM users WHERE id <= 0 OR NOT admin OR staged"
+        "SELECT id FROM users WHERE NOT admin OR staged"
       when :moderators
-        "SELECT id FROM users WHERE id <= 0 OR NOT moderator OR staged"
+        "SELECT id FROM users WHERE NOT moderator OR staged"
       when :staff
-        "SELECT id FROM users WHERE id <= 0 OR (NOT admin AND NOT moderator) OR staged"
+        "SELECT id FROM users WHERE (NOT admin AND NOT moderator) OR staged"
       when :trust_level_0, :trust_level_1, :trust_level_2, :trust_level_3, :trust_level_4
-        "SELECT id FROM users WHERE id <= 0 OR trust_level < #{id - 10} OR staged"
+        "SELECT id FROM users WHERE trust_level < #{id - 10} OR staged"
       end
 
     removed_user_ids = DB.query_single <<-SQL
@@ -573,15 +584,15 @@ class Group < ActiveRecord::Base
     insert_subquery =
       case name
       when :admins
-        "SELECT id FROM users WHERE id > 0 AND admin AND NOT staged"
+        "SELECT id FROM users WHERE admin AND NOT staged"
       when :moderators
-        "SELECT id FROM users WHERE id > 0 AND moderator AND NOT staged"
+        "SELECT id FROM users WHERE moderator AND NOT staged"
       when :staff
-        "SELECT id FROM users WHERE id > 0 AND (moderator OR admin) AND NOT staged"
+        "SELECT id FROM users WHERE (moderator OR admin) AND NOT staged"
       when :trust_level_1, :trust_level_2, :trust_level_3, :trust_level_4
-        "SELECT id FROM users WHERE id > 0 AND trust_level >= #{id - 10} AND NOT staged"
+        "SELECT id FROM users WHERE trust_level >= #{id - 10} AND NOT staged"
       when :trust_level_0
-        "SELECT id FROM users WHERE id > 0 AND NOT staged"
+        "SELECT id FROM users WHERE NOT staged"
       end
 
     added_user_ids = DB.query_single <<-SQL
@@ -625,14 +636,15 @@ class Group < ActiveRecord::Base
   end
 
   def self.reset_groups_user_count!(only_group_ids: [])
-    where_sql = ""
-
-    if only_group_ids.present?
-      where_sql = "WHERE group_id IN (#{only_group_ids.map(&:to_i).join(",")})"
-    end
+    where_sql =
+      if only_group_ids.present?
+        "WHERE group_id IN (#{only_group_ids.map(&:to_i).join(",")}) AND user_id > 0"
+      else
+        "WHERE user_id > 0"
+      end
 
     DB.exec <<-SQL
-      WITH X AS (
+      WITH tally AS (
         SELECT
           group_id,
           COUNT(user_id) users
@@ -641,10 +653,10 @@ class Group < ActiveRecord::Base
         GROUP BY group_id
       )
       UPDATE groups
-         SET user_count = X.users
-        FROM X
-       WHERE id = X.group_id
-         AND user_count <> X.users
+         SET user_count = tally.users
+        FROM tally
+       WHERE id = tally.group_id
+         AND user_count <> tally.users
     SQL
   end
   private_class_method :reset_groups_user_count!
@@ -750,6 +762,8 @@ class Group < ActiveRecord::Base
   def self.group_id_from_param(group_param)
     return group_param.id if group_param.is_a?(Group)
     return group_param if group_param.is_a?(Integer)
+    return Group[group_param].id if group_param.is_a?(Symbol)
+    return group_param.to_i if group_param.to_i.to_s == group_param
 
     # subtle, using Group[] ensures the group exists in the DB
     Group[group_param.to_sym].id
@@ -868,7 +882,7 @@ class Group < ActiveRecord::Base
   end
 
   def bulk_add(user_ids)
-    return unless user_ids.present?
+    return if user_ids.blank?
 
     Group.transaction do
       sql = <<~SQL
@@ -929,7 +943,8 @@ class Group < ActiveRecord::Base
       SET user_count =
         (SELECT COUNT(gu.user_id)
          FROM group_users gu
-         WHERE gu.group_id = g.id)
+         WHERE gu.group_id = g.id
+         AND gu.user_id > 0)
       WHERE g.id = #{self.id};
     SQL
   end
@@ -1302,7 +1317,6 @@ end
 #  mentionable_level                  :integer          default(0)
 #  smtp_server                        :string
 #  smtp_port                          :integer
-#  smtp_ssl                           :boolean
 #  imap_server                        :string
 #  imap_port                          :integer
 #  imap_ssl                           :boolean
@@ -1326,6 +1340,7 @@ end
 #  imap_updated_at                    :datetime
 #  imap_updated_by_id                 :integer
 #  email_from_alias                   :string
+#  smtp_ssl_mode                      :integer          default(0), not null
 #
 # Indexes
 #

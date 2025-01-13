@@ -34,7 +34,7 @@ end
 def setup_test_env(
   setup_multisite: false,
   create_db: true,
-  create_parallel_db: false,
+  create_parallel_dbs: false,
   install_all_official: false,
   update_all_plugins: false,
   plugins_to_remove: "",
@@ -47,7 +47,7 @@ def setup_test_env(
 
   success = true
   success &&= run_or_fail("bundle exec rake db:create") if create_db
-  success &&= run_or_fail("bundle exec rake parallel:create") if create_parallel_db
+  success &&= run_or_fail("bundle exec rake parallel:create") if create_parallel_dbs
   success &&= run_or_fail("bundle exec rake plugin:install_all_official") if install_all_official
   success &&= run_or_fail("bundle exec rake plugin:update_all") if update_all_plugins
 
@@ -61,7 +61,7 @@ def setup_test_env(
       end
   end
 
-  success &&= migrate_databases(parallel: create_parallel_db, load_plugins: load_plugins)
+  success &&= migrate_databases(parallel: create_parallel_dbs, load_plugins: load_plugins)
   success
 end
 
@@ -69,12 +69,34 @@ def migrate_databases(parallel: false, load_plugins: false)
   migrate_env = load_plugins ? "LOAD_PLUGINS=1" : "LOAD_PLUGINS=0"
 
   success = true
-  success &&= run_or_fail("#{migrate_env} bundle exec rake db:migrate")
-  success &&= run_or_fail("#{migrate_env} bundle exec rake parallel:migrate") if parallel
+  success &&=
+    run_or_fail("#{migrate_env} script/silence_successful_output bundle exec rake db:migrate")
+  success &&=
+    run_or_fail(
+      "#{migrate_env} script/silence_successful_output bundle exec rake parallel:migrate",
+    ) if parallel
   success
 end
 
+def number_of_processors
+  Etc.nprocessors
+end
+
+def qunit_concurrency
+  # qunit runs all browsers against a single ember-cli (express.js) server, so this will not scale infinitely
+  # therefore, cap at 8
+  [number_of_processors / 2, 8].min
+end
+
+def system_tests_parallel_tests_processors_env
+  "PARALLEL_TEST_PROCESSORS=#{number_of_processors / 2}"
+end
+
 # Environment Variables (specific to this rake task)
+# => INSTALL_OFFICIAL_PLUGINS  set to 1 to install all official plugins
+# => UPDATE_ALL_PLUGINS        set to 1 to update all plugins
+# => LOAD_PLUGINS              set to 1 to load plugins
+# => CREATE_PARALLEL_DATABASES set to 1 to setup parallel test databases
 desc "Setups up the test environment"
 task "docker:test:setup" do
   setup_redis
@@ -83,10 +105,10 @@ task "docker:test:setup" do
   setup_test_env(
     setup_multisite: true,
     create_db: true,
-    create_parallel_db: false,
-    load_plugins: false,
-    install_all_official: false,
-    update_all_plugins: false,
+    create_parallel_dbs: !!ENV["CREATE_PARALLEL_DATABASES"],
+    load_plugins: !!ENV["LOAD_PLUGINS"],
+    install_all_official: !!ENV["INSTALL_OFFICIAL_PLUGINS"],
+    update_all_plugins: !!ENV["UPDATE_ALL_PLUGINS"],
   )
 end
 
@@ -125,7 +147,7 @@ task "docker:test" do
   def run_or_fail_prettier(*patterns)
     if patterns.any? { |p| Dir[p].any? }
       patterns = patterns.map { |p| "'#{p}'" }.join(" ")
-      run_or_fail("yarn pprettier --list-different #{patterns}")
+      run_or_fail("pnpm pprettier --list-different #{patterns}")
     else
       puts "Skipping prettier. Pattern not found."
       true
@@ -134,12 +156,12 @@ task "docker:test" do
 
   begin
     @good = true
-    @good &&= run_or_fail("yarn install")
+    @good &&= run_or_fail("pnpm install")
 
     unless ENV["SKIP_LINT"]
       puts "Running linters/prettyfiers"
-      puts "eslint #{`yarn eslint -v`}"
-      puts "prettier #{`yarn prettier -v`}"
+      puts "eslint #{`pnpm eslint -v`}"
+      puts "prettier #{`pnpm prettier -v`}"
 
       if ENV["SINGLE_PLUGIN"]
         @good &&= run_or_fail("bundle exec rubocop --parallel plugins/#{ENV["SINGLE_PLUGIN"]}")
@@ -149,7 +171,7 @@ task "docker:test" do
           )
         @good &&=
           run_or_fail(
-            "yarn eslint --ext .js,.js.es6 --no-error-on-unmatched-pattern plugins/#{ENV["SINGLE_PLUGIN"]}",
+            "pnpm eslint --ext .js,.js.es6 --no-error-on-unmatched-pattern plugins/#{ENV["SINGLE_PLUGIN"]}",
           )
 
         puts "Listing prettier offenses in #{ENV["SINGLE_PLUGIN"]}:"
@@ -161,10 +183,10 @@ task "docker:test" do
       else
         @good &&= run_or_fail("bundle exec rake plugin:update_all") unless ENV["SKIP_PLUGINS"]
         @good &&= run_or_fail("bundle exec rubocop --parallel") unless ENV["SKIP_CORE"]
-        @good &&= run_or_fail("yarn eslint app/assets/javascripts") unless ENV["SKIP_CORE"]
+        @good &&= run_or_fail("pnpm eslint app/assets/javascripts") unless ENV["SKIP_CORE"]
         @good &&=
           run_or_fail(
-            "yarn eslint --ext .js,.js.es6 --no-error-on-unmatched-pattern plugins",
+            "pnpm eslint --ext .js,.js.es6 --no-error-on-unmatched-pattern plugins",
           ) unless ENV["SKIP_PLUGINS"]
 
         @good &&=
@@ -180,7 +202,7 @@ task "docker:test" do
           puts "Listing prettier offenses in core:"
           @good &&=
             run_or_fail(
-              'yarn pprettier --list-different "app/assets/stylesheets/**/*.scss" "app/assets/javascripts/**/*.js"',
+              'pnpm pprettier --list-different "app/assets/stylesheets/**/*.scss" "app/assets/javascripts/**/*.js"',
             )
         end
 
@@ -188,7 +210,7 @@ task "docker:test" do
           puts "Listing prettier offenses in plugins:"
           @good &&=
             run_or_fail(
-              'yarn pprettier --list-different "plugins/**/assets/stylesheets/**/*.scss" "plugins/**/assets/javascripts/**/*.{js,es6}"',
+              'pnpm pprettier --list-different "plugins/**/assets/stylesheets/**/*.scss" "plugins/**/assets/javascripts/**/*.{js,es6}"',
             )
         end
       end
@@ -202,7 +224,7 @@ task "docker:test" do
         setup_test_env(
           setup_multisite: !ENV["JS_ONLY"],
           create_db: !ENV["SKIP_DB_CREATE"],
-          create_parallel_db: !!ENV["USE_TURBO"],
+          create_parallel_dbs: !!ENV["USE_TURBO"],
           install_all_official: !!ENV["INSTALL_OFFICIAL_PLUGINS"],
           update_all_plugins: !!ENV["UPDATE_ALL_PLUGINS"],
           plugins_to_remove: ENV["SKIP_INSTALL_PLUGINS"] || "",
@@ -210,6 +232,8 @@ task "docker:test" do
         )
 
       unless ENV["JS_ONLY"]
+        @good &&= run_or_fail("bin/ember-cli --build") if ENV["RUN_SYSTEM_TESTS"]
+
         if ENV["WARMUP_TMP_FOLDER"]
           run_or_fail("bundle exec rspec ./spec/requests/groups_controller_spec.rb")
         end
@@ -232,47 +256,64 @@ task "docker:test" do
           end
 
           if ENV["RUN_SYSTEM_TESTS"]
-            @good &&= run_or_fail("bin/ember-cli --build")
-            @good &&= run_or_fail("timeout --verbose 1800 bundle exec rspec spec/system")
+            @good &&=
+              if ENV["USE_TURBO"]
+                run_or_fail(
+                  "#{system_tests_parallel_tests_processors_env} timeout --verbose 1800 bundle exec ./bin/turbo_rspec spec/system",
+                )
+              else
+                run_or_fail("timeout --verbose 1800 bundle exec rspec spec/system")
+              end
           end
         end
 
         unless ENV["SKIP_PLUGINS"]
           if ENV["SINGLE_PLUGIN"]
             @good &&= run_or_fail("bundle exec rake plugin:spec['#{ENV["SINGLE_PLUGIN"]}']")
+
+            if ENV["RUN_SYSTEM_TESTS"]
+              @good &&=
+                run_or_fail(
+                  "LOAD_PLUGINS=1 timeout --verbose 1600 bundle exec rspec plugins/#{ENV["SINGLE_PLUGIN"]}/spec/system".strip,
+                )
+            end
           else
             fail_fast = "RSPEC_FAILFAST=1" unless ENV["SKIP_FAILFAST"]
             task = ENV["USE_TURBO"] ? "plugin:turbo_spec" : "plugin:spec"
             @good &&= run_or_fail("#{fail_fast} bundle exec rake #{task}")
-          end
 
-          if ENV["RUN_SYSTEM_TESTS"]
-            @good &&=
-              run_or_fail(
-                "LOAD_PLUGINS=1 timeout --verbose 1600 bundle exec rspec plugins/*/spec/system".strip,
-              )
+            if ENV["RUN_SYSTEM_TESTS"]
+              @good &&=
+                if ENV["USE_TURBO"]
+                  run_or_fail(
+                    "LOAD_PLUGINS=1 #{system_tests_parallel_tests_processors_env} timeout --verbose 1600 bundle exec ./bin/turbo_rspec plugins/*/spec/system",
+                  )
+                else
+                  run_or_fail(
+                    "LOAD_PLUGINS=1 timeout --verbose 1600 bundle exec rspec plugins/*/spec/system",
+                  )
+                end
+            end
           end
         end
       end
 
       unless ENV["RUBY_ONLY"]
-        js_timeout = ENV["JS_TIMEOUT"].presence || 900_000 # 15 minutes
-
         unless ENV["SKIP_CORE"]
           @good &&=
             run_or_fail(
-              "cd app/assets/javascripts/discourse && CI=1 yarn ember exam --load-balance --parallel=3 --random",
+              "cd app/assets/javascripts/discourse && CI=1 pnpm ember exam --load-balance --parallel=#{qunit_concurrency} --random",
             )
         end
 
         unless ENV["SKIP_PLUGINS"]
           if ENV["SINGLE_PLUGIN"]
+            @good &&= run_or_fail("CI=1 bundle exec rake plugin:qunit['#{ENV["SINGLE_PLUGIN"]}']")
+          else
             @good &&=
               run_or_fail(
-                "CI=1 bundle exec rake plugin:qunit['#{ENV["SINGLE_PLUGIN"]}','#{js_timeout}']",
+                "QUNIT_PARALLEL=#{qunit_concurrency} CI=1 bundle exec rake plugin:qunit['*']",
               )
-          else
-            @good &&= run_or_fail("CI=1 bundle exec rake plugin:qunit['*','#{js_timeout}']")
           end
         end
       end

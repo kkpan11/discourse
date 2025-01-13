@@ -10,7 +10,7 @@ RSpec.describe GroupSmtpMailer do
       full_name: "Testers Group",
       smtp_server: "smtp.gmail.com",
       smtp_port: 587,
-      smtp_ssl: true,
+      smtp_ssl_mode: Group.smtp_ssl_modes[:starttls],
       smtp_enabled: true,
       imap_server: "imap.gmail.com",
       imap_port: 993,
@@ -115,6 +115,37 @@ RSpec.describe GroupSmtpMailer do
     post = PostCreator.create(user, topic_id: receiver.incoming_email.topic.id, raw: raw)
     sent_mail = ActionMailer::Base.deliveries[0]
     expect(sent_mail.subject).to eq("Re: Hello from John")
+  end
+
+  it "configures delivery options for SMTP correctly" do
+    mail = GroupSmtpMailer.send_mail(group, user.email, Fabricate(:post))
+    expect(mail.delivery_method.settings).to eq(
+      {
+        address: "smtp.gmail.com",
+        port: 587,
+        domain: "gmail.com",
+        user_name: "bugs@gmail.com",
+        password: "super$secret$password",
+        authentication: GlobalSetting.smtp_authentication,
+        enable_starttls_auto: true,
+        enable_ssl: false,
+        return_response: true,
+        open_timeout: GlobalSetting.group_smtp_open_timeout,
+        read_timeout: GlobalSetting.group_smtp_read_timeout,
+      },
+    )
+  end
+
+  it "uses the login SMTP authentication method for office365" do
+    group.update!(smtp_server: "smtp.office365.com")
+    mail = GroupSmtpMailer.send_mail(group, user.email, Fabricate(:post))
+    expect(mail.delivery_method.settings[:authentication]).to eq("login")
+  end
+
+  it "uses the login SMTP authentication method for outlook" do
+    group.update!(smtp_server: "smtp-mail.outlook.com")
+    mail = GroupSmtpMailer.send_mail(group, user.email, Fabricate(:post))
+    expect(mail.delivery_method.settings[:authentication]).to eq("login")
   end
 
   context "when the site has a reply by email address configured" do

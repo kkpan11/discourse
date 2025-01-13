@@ -9,6 +9,20 @@ class Wizard
     def build
       return @wizard unless SiteSetting.wizard_enabled? && @wizard.user.try(:staff?)
 
+      append_introduction_step
+      append_privacy_step
+      append_styling_step
+      append_ready_step
+      append_branding_step
+      append_corporate_step
+
+      DiscourseEvent.trigger(:build_wizard, @wizard)
+      @wizard
+    end
+
+    protected
+
+    def append_introduction_step
       @wizard.append_step("introduction") do |step|
         step.emoji = "wave"
         step.description_vars = { base_path: Discourse.base_path }
@@ -56,60 +70,55 @@ class Wizard
           end
         end
       end
+    end
 
+    def append_privacy_step
       @wizard.append_step("privacy") do |step|
         step.emoji = "hugs"
+
         step.add_field(
           id: "login_required",
-          type: "checkbox",
-          icon: "unlock",
-          value: SiteSetting.login_required,
-        )
+          type: "radio",
+          value: SiteSetting.login_required ? "private" : "public",
+        ) do |field|
+          field.add_choice("public")
+          field.add_choice("private")
+        end
 
         step.add_field(
           id: "invite_only",
-          type: "checkbox",
-          icon: "user-plus",
-          value: SiteSetting.invite_only,
-        )
+          type: "radio",
+          value: SiteSetting.invite_only ? "invite_only" : "sign_up",
+        ) do |field|
+          field.add_choice("sign_up", icon: "user-plus")
+          field.add_choice("invite_only", icon: "paper-plane")
+        end
 
         step.add_field(
           id: "must_approve_users",
-          type: "checkbox",
-          icon: "user-shield",
-          value: SiteSetting.must_approve_users,
-        )
-
-        if defined?(::Chat)
-          step.add_field(
-            id: "chat_enabled",
-            type: "checkbox",
-            icon: "d-chat",
-            value: SiteSetting.chat_enabled,
-          )
+          type: "radio",
+          value: SiteSetting.must_approve_users ? "yes" : "no",
+        ) do |field|
+          field.add_choice("no")
+          field.add_choice("yes")
         end
-
-        step.add_field(
-          id: "enable_sidebar",
-          type: "checkbox",
-          icon: "bars",
-          value: SiteSetting.navigation_menu == NavigationMenuSiteSetting::SIDEBAR,
-        )
 
         step.on_update do |updater|
-          updater.update_setting(:login_required, updater.fields[:login_required])
-          updater.update_setting(:invite_only, updater.fields[:invite_only])
-          updater.update_setting(:must_approve_users, updater.fields[:must_approve_users])
-          updater.update_setting(:chat_enabled, updater.fields[:chat_enabled]) if defined?(::Chat)
-          updater.update_setting(:navigation_menu, updater.fields[:enable_sidebar])
+          updater.update_setting(:login_required, updater.fields[:login_required] == "private")
+          updater.update_setting(:invite_only, updater.fields[:invite_only] == "invite_only")
+          updater.update_setting(:must_approve_users, updater.fields[:must_approve_users] == "yes")
         end
       end
+    end
 
+    def append_ready_step
       @wizard.append_step("ready") do |step|
         # no form on this page, just info.
         step.emoji = "rocket"
       end
+    end
 
+    def append_branding_step
       @wizard.append_step("branding") do |step|
         step.emoji = "framed_picture"
         step.add_field(id: "logo", type: "image", value: SiteSetting.site_logo_url)
@@ -123,10 +132,12 @@ class Wizard
           end
         end
       end
+    end
 
+    def append_styling_step
       @wizard.append_step("styling") do |step|
         step.emoji = "art"
-        default_theme = Theme.find_by(id: SiteSetting.default_theme_id)
+        default_theme = Theme.find_default
         default_theme_override = SiteSetting.exists?(name: "default_theme_id")
 
         base_scheme = default_theme&.color_scheme&.base_scheme_id
@@ -170,17 +181,20 @@ class Wizard
             show_in_sidebar: true,
           )
 
-        DiscourseFonts.fonts.each do |font|
-          body_font.add_choice(font[:key], label: font[:name])
-          heading_font.add_choice(font[:key], label: font[:name])
-        end
+        DiscourseFonts
+          .fonts
+          .sort_by { |f| f[:name] }
+          .each do |font|
+            body_font.add_choice(font[:key], label: font[:name])
+            heading_font.add_choice(font[:key], label: font[:name])
+          end
 
         current =
           (
-            if SiteSetting.top_menu.starts_with?("categories")
+            if SiteSetting.homepage == "categories"
               SiteSetting.desktop_category_page_style
             else
-              "latest"
+              SiteSetting.homepage
             end
           )
         style =
@@ -192,18 +206,24 @@ class Wizard
             show_in_sidebar: true,
           )
         style.add_choice("latest")
-        CategoryPageStyle.values.each { |page| style.add_choice(page[:value]) }
+        style.add_choice("hot")
 
-        step.add_field(id: "styling_preview", type: "component")
+        # Subset of CategoryPageStyle, we don't want to show all the options here.
+        style.add_choice("categories_and_latest_topics")
+        style.add_choice("categories_boxes")
+
+        step.add_field(id: "styling_preview", type: "styling-preview")
 
         step.on_update do |updater|
           updater.update_setting(:base_font, updater.fields[:body_font])
           updater.update_setting(:heading_font, updater.fields[:heading_font])
 
-          top_menu = SiteSetting.top_menu.split("|")
-          if updater.fields[:homepage_style] == "latest" && top_menu[0] != "latest"
-            top_menu.delete("latest")
-            top_menu.insert(0, "latest")
+          top_menu = SiteSetting.top_menu_map
+          if %w[latest hot].include?(updater.fields[:homepage_style])
+            if top_menu.first != updater.fields[:homepage_style]
+              top_menu.delete(updater.fields[:homepage_style])
+              top_menu.insert(0, updater.fields[:homepage_style])
+            end
           elsif updater.fields[:homepage_style] != "latest"
             top_menu.delete("categories")
             top_menu.insert(0, "categories")
@@ -239,7 +259,9 @@ class Wizard
           updater.refresh_required = true
         end
       end
+    end
 
+    def append_corporate_step
       @wizard.append_step("corporate") do |step|
         step.emoji = "briefcase"
         step.description_vars = { base_path: Discourse.base_path }
@@ -267,12 +289,7 @@ class Wizard
           end
         end
       end
-
-      DiscourseEvent.trigger(:build_wizard, @wizard)
-      @wizard
     end
-
-    protected
 
     def replace_setting_value(updater, raw, field_name)
       old_value = SiteSetting.get(field_name)

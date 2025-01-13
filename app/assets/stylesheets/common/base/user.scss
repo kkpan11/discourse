@@ -64,6 +64,15 @@
 
   .show-mores {
     width: 100%;
+
+    .alert-info.clickable {
+      gap: 0.5em;
+
+      &.loading {
+        color: var(--primary-medium);
+        cursor: default;
+      }
+    }
   }
 
   .d-icon-heart {
@@ -188,10 +197,12 @@
     }
 
     .controls {
-      margin-left: auto;
       ul {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5em;
         list-style-type: none;
-        margin-top: 0;
+        margin: 0 0 0.5em 0;
       }
     }
 
@@ -294,7 +305,6 @@
       label:not(.checkbox-label) {
         width: auto;
         text-align: left;
-        font-weight: normal;
         font-weight: bold;
       }
 
@@ -369,11 +379,11 @@
       margin: 0;
     }
   }
-  $label-max-width: 300px;
+  --label-max-width: 300px;
   label.radio {
     display: flex;
     align-items: center;
-    max-width: $label-max-width;
+    max-width: var(--label-max-width);
     margin: 0 0.5em 0 0;
     padding: 0;
     .avatar {
@@ -384,7 +394,7 @@
   .error {
     color: var(--danger);
     margin: 0;
-    max-width: calc(#{$label-max-width} - 20px);
+    max-width: calc(var(--label-max-width) - 20px);
     grid-column-start: 2;
     grid-column-end: 3;
   }
@@ -467,6 +477,21 @@
     color: var(--primary-medium);
   }
 
+  .user-info .user-detail {
+    width: 100%;
+    .name-line {
+      span {
+        width: auto;
+      }
+      .username {
+        overflow-wrap: anywhere;
+      }
+      > a {
+        flex-wrap: nowrap;
+      }
+    }
+  }
+
   @media all and (max-width: 600px) {
     float: none;
     width: 100%;
@@ -518,6 +543,23 @@
 }
 
 .user-preferences {
+  .form-vertical {
+    width: 500px;
+    max-width: 100%;
+
+    .control-group {
+      margin-bottom: 2em;
+    }
+  }
+
+  .category-selector,
+  .tag-chooser,
+  textarea,
+  input.user-selector,
+  .user-chooser {
+    width: 100%;
+  }
+
   textarea {
     height: 100px;
   }
@@ -735,44 +777,16 @@
       }
     }
   }
+
+  .pref-second-factor {
+    margin-top: 0.5em;
+  }
 }
 
 .paginated-topics-list {
   .user-content {
     width: 100%;
     margin-top: 0;
-  }
-}
-
-.large-notifications {
-  margin: 0;
-}
-
-.large-notification {
-  display: flex;
-  align-items: center;
-
-  a {
-    display: flex;
-    align-items: center;
-
-    .d-icon {
-      margin-right: 0.5em;
-    }
-
-    span:first-child {
-      color: var(--primary);
-    }
-
-    // Can remove this once other languages have removed html from i18n values
-    div {
-      .fa {
-        display: none;
-      }
-      p {
-        margin: 0;
-      }
-    }
   }
 }
 
@@ -808,12 +822,6 @@
   }
 }
 
-.d-modal[class*="second-factor-"] {
-  .modal-inner-container {
-    max-width: 24em;
-  }
-}
-
 .backup-codes {
   margin: 1em 0;
 
@@ -834,7 +842,7 @@
     border: 0;
     cursor: auto;
     outline: none;
-    font-family: monospace;
+    font-family: var(--d-font-family--monospace);
     &:focus {
       box-shadow: none;
       border-color: var(--primary-low);
@@ -854,6 +862,7 @@
 .primary-textual {
   flex: 1 1 auto;
   min-width: 0;
+  margin-right: auto;
 }
 
 .primary-textual .staged,
@@ -914,13 +923,26 @@
   .selectable-avatar {
     margin: 5px;
     display: inline-block;
+    position: relative;
     .avatar {
       cursor: pointer;
       width: 60px;
       height: 60px;
-      &:hover {
-        box-shadow: 0 0 10px var(--primary);
+    }
+    &:hover {
+      .selectable-avatar__remove {
+        visibility: visible;
       }
+    }
+    &__remove {
+      visibility: hidden;
+      color: var(--primary-high);
+      position: absolute;
+      bottom: 0px;
+      width: 100%;
+      left: 0px;
+      text-align: center;
+      font-size: var(--font-up-2);
     }
   }
 }
@@ -952,6 +974,19 @@
   }
 }
 
+.user-additional-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+
+.user-invite-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin-left: auto;
+}
+
 .notification-schedule {
   .instruction {
     margin-top: 12px;
@@ -970,5 +1005,25 @@
         }
       }
     }
+  }
+}
+
+// Due to special login animations, the order here needs to be changed
+.control-group[data-setting-name="user-user-fields"]
+  .user-field.text
+  .controls {
+  display: flex;
+  flex-direction: column;
+  .control-label.alt-placeholder {
+    order: 1;
+  }
+  .ember-text-field {
+    order: 2;
+  }
+  .tip {
+    order: 3;
+  }
+  .instructions {
+    order: 4;
   }
 }

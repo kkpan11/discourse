@@ -33,12 +33,21 @@
 
   .user-stream-item__details {
     flex-grow: 1;
+    min-width: 0;
+    .badge-category__wrapper {
+      width: 100%;
+    }
+  }
+
+  .stream-topic-title {
+    overflow-wrap: anywhere;
   }
 
   .user-stream-item__metadata {
     align-items: end;
     display: flex;
     flex-direction: column;
+    margin-left: 0.25em;
   }
 
   .type,
@@ -46,7 +55,7 @@
     color: var(--primary);
   }
 
-  .time,
+  .relative-date,
   .delete-info,
   .draft-type {
     line-height: var(--line-height-small);
@@ -69,9 +78,35 @@
     }
   }
 
-  .notification .time {
-    margin-left: auto;
-    float: none;
+  .user-notifications-list {
+    padding-top: 0;
+
+    li.notification {
+      padding: 0.25em 0;
+      border-bottom: 1px solid var(--primary-low);
+
+      a {
+        align-items: center;
+      }
+      .d-icon {
+        color: var(--primary-medium);
+      }
+      .relative-date {
+        margin-left: auto;
+        padding-top: 0;
+        float: none;
+      }
+    }
+    &:not(.show-avatars) {
+      li.notification {
+        padding: 0.75em 0;
+
+        .d-icon {
+          padding-top: 0;
+          font-size: var(--font-up-2);
+        }
+      }
+    }
   }
 
   .expand-item,
@@ -102,27 +137,6 @@
     float: right;
   }
 
-  .notification {
-    li {
-      display: inline-block;
-    }
-
-    p {
-      display: inline-block;
-
-      span:first-child {
-        color: var(--primary);
-      }
-    }
-
-    // common/base/header.scss
-    .fa,
-    .icon {
-      color: var(--primary-med-or-secondary-med);
-      font-size: var(--font-up-4);
-    }
-  }
-
   .excerpt {
     margin: 1em 0 0 0;
     font-size: var(--font-0);
@@ -133,6 +147,13 @@
     }
     details.disabled {
       color: var(--primary-medium);
+    }
+    .emoji.only-emoji {
+      // oversized emoji break excerpt layout
+      // so we match inline emoji size
+      width: 20px;
+      height: 20px;
+      margin: 0;
     }
   }
 
@@ -158,7 +179,7 @@
     &.d-icon-heart {
       color: var(--love);
     }
-    &.d-icon-far-trash-alt {
+    &.d-icon-trash-can {
       color: var(--secondary);
     }
   }

@@ -1,6 +1,6 @@
 import { click, fillIn, triggerEvent } from "@ember/test-helpers";
 import { isEmpty } from "@ember/utils";
-import jQuery from "jquery";
+import $ from "jquery";
 import { exists, query, queryAll } from "discourse/tests/helpers/qunit-helpers";
 
 function checkSelectKitIsNotExpanded(selector) {
@@ -65,7 +65,7 @@ async function keyboardHelper(value, target, selector) {
 
   if (value === "selectAll") {
     // special casing the only one not working with triggerEvent
-    const event = jQuery.Event("keydown");
+    const event = $.Event("keydown");
     event.key = "A";
     event.keyCode = 65;
     event.metaKey = true;
@@ -114,6 +114,9 @@ function rowHelper(row) {
     },
     el() {
       return row;
+    },
+    hasClass(className) {
+      return row.classList.contains(className);
     },
   };
 }
@@ -229,6 +232,10 @@ export default function selectKit(selector) {
       return filterHelper(query(selector).querySelector(".select-kit-filter"));
     },
 
+    error() {
+      return query(selector).querySelector(".select-kit-error");
+    },
+
     rows() {
       return query(selector).querySelectorAll(".select-kit-row");
     },
@@ -268,6 +275,10 @@ export default function selectKit(selector) {
       return rowHelper(query(selector).querySelector(".select-kit-row.none"));
     },
 
+    clearButton() {
+      return query(selector).querySelector(".btn-clear");
+    },
+
     validationMessage() {
       const validationMessage = query(selector).querySelector(
         ".validation-message"
@@ -298,6 +309,12 @@ export default function selectKit(selector) {
 
     async deselectItemByName(name) {
       await click(`${selector} .selected-content [data-name="${name}"]`);
+    },
+
+    async deselectItemByIndex(index) {
+      await click(
+        queryAll(`${selector} .selected-content .selected-choice`)[index]
+      );
     },
 
     exists() {

@@ -1,37 +1,37 @@
 import Component from "@glimmer/component";
 import { action } from "@ember/object";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
 import { focusSearchInput } from "discourse/components/search-menu";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 const DEFAULT_QUICK_TIPS = [
   {
     label: "#",
-    description: I18n.t("search.tips.category_tag"),
+    description: i18n("search.tips.category_tag"),
     clickable: true,
   },
   {
     label: "@",
-    description: I18n.t("search.tips.author"),
+    description: i18n("search.tips.author"),
     clickable: true,
   },
   {
     label: "in:",
-    description: I18n.t("search.tips.in"),
+    description: i18n("search.tips.in"),
     clickable: true,
   },
   {
     label: "status:",
-    description: I18n.t("search.tips.status"),
+    description: i18n("search.tips.status"),
     clickable: true,
   },
   {
-    label: I18n.t("search.tips.full_search_key", { modifier: "Ctrl" }),
-    description: I18n.t("search.tips.full_search"),
+    label: i18n("search.tips.full_search_key", { modifier: "Ctrl" }),
+    description: i18n("search.tips.full_search"),
   },
   {
     label: "@me",
-    description: I18n.t("search.tips.me"),
+    description: i18n("search.tips.me"),
   },
 ];
 
@@ -47,6 +47,10 @@ export function resetQuickSearchRandomTips() {
   QUICK_TIPS = [].concat(DEFAULT_QUICK_TIPS);
 }
 
+export function removeDefaultQuickSearchRandomTips() {
+  QUICK_TIPS = QUICK_TIPS.filter((tip) => !DEFAULT_QUICK_TIPS.includes(tip));
+}
+
 resetQuickSearchRandomTips();
 
 export default class RandomQuickTip extends Component {
@@ -60,7 +64,7 @@ export default class RandomQuickTip extends Component {
   @action
   tipSelected(e) {
     if (e.target.classList.contains("tip-clickable")) {
-      this.search.activeGlobalSearchTerm = this.randomTip.label;
+      this.args.searchTermChanged(this.randomTip.label);
       focusSearchInput();
 
       e.stopPropagation();

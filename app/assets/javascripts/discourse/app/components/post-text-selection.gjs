@@ -1,21 +1,23 @@
 import Component from "@glimmer/component";
+import { cached, tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
-import { cancel } from "@ember/runloop";
-import { inject as service } from "@ember/service";
+import { cancel, debounce } from "@ember/runloop";
+import { service } from "@ember/service";
 import { modifier } from "ember-modifier";
 import PostTextSelectionToolbar from "discourse/components/post-text-selection-toolbar";
+import discourseDebounce from "discourse/lib/debounce";
+import { bind } from "discourse/lib/decorators";
+import { INPUT_DELAY } from "discourse/lib/environment";
+import escapeRegExp from "discourse/lib/escape-regexp";
+import isElementInViewport from "discourse/lib/is-element-in-viewport";
 import toMarkdown from "discourse/lib/to-markdown";
 import {
+  getElement,
   selectedNode,
   selectedRange,
   selectedText,
 } from "discourse/lib/utilities";
 import virtualElementFromTextRange from "discourse/lib/virtual-element-from-text-range";
-import { INPUT_DELAY } from "discourse-common/config/environment";
-import discourseDebounce from "discourse-common/lib/debounce";
-import discourseLater from "discourse-common/lib/later";
-import { bind } from "discourse-common/utils/decorators";
-import escapeRegExp from "discourse-common/utils/escape-regexp";
 
 function getQuoteTitle(element) {
   const titleEl = element.querySelector(".title");
@@ -31,11 +33,12 @@ function getQuoteTitle(element) {
   return titleEl.textContent.trim().replace(/:$/, "");
 }
 
-export function fixQuotes(str) {
-  // u+201c, u+201d = “ ”
-  // u+2018, u+2019 = ‘ ’
-  return str.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
-}
+const CSS_TO_DISABLE_FAST_EDIT = [
+  "aside.quote",
+  "aside.onebox",
+  ".cooked-date",
+  "body.encrypted-topic-page",
+].join(",");
 
 export default class PostTextSelection extends Component {
   @service appEvents;
@@ -45,31 +48,38 @@ export default class PostTextSelection extends Component {
   @service siteSettings;
   @service menu;
 
-  prevSelection;
+  @tracked isSelecting = false;
+
+  prevSelectedText;
 
   runLoopHandlers = modifier(() => {
     return () => {
       cancel(this.selectionChangeHandler);
-      cancel(this.holdingMouseDownHandle);
     };
   });
 
   documentListeners = modifier(() => {
     document.addEventListener("mousedown", this.mousedown, { passive: true });
     document.addEventListener("mouseup", this.mouseup, { passive: true });
-    document.addEventListener("selectionchange", this.selectionchange);
+    document.addEventListener("selectionchange", this.onSelectionChanged);
 
     return () => {
       document.removeEventListener("mousedown", this.mousedown);
       document.removeEventListener("mouseup", this.mouseup);
-      document.removeEventListener("selectionchange", this.selectionchange);
+      document.removeEventListener("selectionchange", this.onSelectionChanged);
     };
   });
 
   appEventsListeners = modifier(() => {
+    this.appEvents.on("topic:current-post-scrolled", this, "handleTopicScroll");
     this.appEvents.on("quote-button:quote", this, "insertQuote");
 
     return () => {
+      this.appEvents.off(
+        "topic:current-post-scrolled",
+        this,
+        "handleTopicScroll"
+      );
       this.appEvents.off("quote-button:quote", this, "insertQuote");
     };
   });
@@ -77,8 +87,8 @@ export default class PostTextSelection extends Component {
   willDestroy() {
     super.willDestroy(...arguments);
 
-    this.menuInstance?.destroy();
-    cancel(this.selectionChangedHandler);
+    cancel(this.debouncedSelectionChanged);
+    this.menuInstance?.close();
   }
 
   @bind
@@ -87,30 +97,41 @@ export default class PostTextSelection extends Component {
     await this.menuInstance?.close();
   }
 
-  @bind
-  async selectionChanged() {
-    let supportsFastEdit = this.canEditPost;
-    const selection = window.getSelection();
+  async selectionChanged(options = {}) {
+    if (this.isSelecting) {
+      return;
+    }
 
-    if (selection.isCollapsed) {
+    const _selectedText = selectedText();
+
+    const selection = window.getSelection();
+    if (selection.isCollapsed || _selectedText === "") {
       if (!this.menuInstance?.expanded) {
         this.args.quoteState.clear();
       }
       return;
     }
 
+    // avoid hard loops in quote selection unconditionally
+    // this can happen if you triple click text in firefox
+    // it's also generally unecessary work to go
+    // through this if the selection hasn't changed
+    if (
+      !options.force &&
+      this.menuInstance?.expanded &&
+      this.prevSelectedText === _selectedText
+    ) {
+      return;
+    }
+
+    this.prevSelectedText = _selectedText;
+
     // ensure we selected content inside 1 post *only*
     let postId;
     for (let r = 0; r < selection.rangeCount; r++) {
       const range = selection.getRangeAt(r);
-      const selectionStart =
-        range.startContainer.nodeType === Node.ELEMENT_NODE
-          ? range.startContainer
-          : range.startContainer.parentElement;
-      const ancestor =
-        range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
-          ? range.commonAncestorContainer
-          : range.commonAncestorContainer.parentElement;
+      const selectionStart = getElement(range.startContainer);
+      const ancestor = getElement(range.commonAncestorContainer);
 
       if (!selectionStart.closest(".cooked")) {
         return await this.hideToolbar();
@@ -123,11 +144,7 @@ export default class PostTextSelection extends Component {
       }
     }
 
-    const _selectedElement =
-      selectedNode().nodeType === Node.ELEMENT_NODE
-        ? selectedNode()
-        : selectedNode().parentElement;
-    const _selectedText = selectedText();
+    const _selectedElement = getElement(selectedNode());
     const cooked =
       _selectedElement.querySelector(".cooked") ||
       _selectedElement.closest(".cooked");
@@ -157,69 +174,89 @@ export default class PostTextSelection extends Component {
     const quoteState = this.args.quoteState;
     quoteState.selected(postId, _selectedText, opts);
 
-    if (this.canEditPost) {
+    let supportsFastEdit = this.canEditPost;
+
+    const start = getElement(selection.getRangeAt(0).startContainer);
+
+    if (!start || start.closest(CSS_TO_DISABLE_FAST_EDIT)) {
+      supportsFastEdit = false;
+    }
+
+    if (supportsFastEdit) {
       const regexp = new RegExp(escapeRegExp(quoteState.buffer), "gi");
       const matches = cooked.innerHTML.match(regexp);
-      const non_ascii_regex = /[^\x00-\x7F]/;
 
       if (
         quoteState.buffer.length === 0 ||
         quoteState.buffer.includes("|") || // tables are too complex
         quoteState.buffer.match(/\n/g) || // linebreaks are too complex
-        matches?.length > 1 || // duplicates are too complex
-        non_ascii_regex.test(quoteState.buffer) // non-ascii chars break fast-edit
+        quoteState.buffer.match(/[‚‘’„“”«»‹›™±…→←↔¶]/g) || // typopgraphic characters are too complex
+        matches?.length !== 1 // duplicates are too complex
       ) {
         supportsFastEdit = false;
-      } else if (matches?.length === 1) {
-        supportsFastEdit = true;
       }
     }
 
-    // avoid hard loops in quote selection unconditionally
-    // this can happen if you triple click text in firefox
-    if (this.menuInstance?.expanded && this.prevSelection === _selectedText) {
-      return;
+    let offset = 3;
+    if (this.shouldRenderUnder) {
+      // on mobile, we ideally want to show the toolbar at the end of the selection
+      offset = 20;
+
+      if (
+        !isElementInViewport(selectedRange().startContainer.parentNode) ||
+        !isElementInViewport(selectedRange().endContainer.parentNode)
+      ) {
+        // we force a higher offset in two cases:
+        // - the start of the selection is not in viewport, in this case on iOS for example
+        //   the native menu will be shown at the bottom of the screen, right after text selection
+        //   so we need more space
+        // - the end of the selection is not in viewport, in this case our menu will be shown at the top
+        //   of the screen, so we need more space to avoid overlapping with the native menu
+        offset = 70;
+      }
     }
 
-    this.prevSelection = _selectedText;
-
-    // on Desktop, shows the button at the beginning of the selection
-    // on Mobile, shows the button at the end of the selection
-    const { isIOS, isAndroid, isOpera } = this.capabilities;
-    const showAtEnd = this.site.isMobileDevice || isIOS || isAndroid || isOpera;
-    const options = {
+    const menuOptions = {
+      identifier: "post-text-selection-toolbar",
       component: PostTextSelectionToolbar,
       inline: true,
-      placement: showAtEnd ? "bottom-start" : "top-start",
-      fallbackPlacements: showAtEnd
+      placement: this.shouldRenderUnder ? "bottom-start" : "top-start",
+      fallbackPlacements: this.shouldRenderUnder
         ? ["bottom-end", "top-start"]
         : ["bottom-start"],
-      offset: showAtEnd ? 25 : 3,
+      offset,
       trapTab: false,
+      closeOnScroll: false,
       data: {
         canEditPost: this.canEditPost,
+        canCopyQuote: this.canCopyQuote,
         editPost: this.args.editPost,
         supportsFastEdit,
         topic: this.args.topic,
         quoteState,
         insertQuote: this.insertQuote,
+        buildQuote: this.buildQuote,
         hideToolbar: this.hideToolbar,
       },
     };
 
-    this.menuInstance?.destroy();
+    await this.menuInstance?.destroy();
 
     this.menuInstance = await this.menu.show(
       virtualElementFromTextRange(),
-      options
+      menuOptions
     );
   }
 
   @bind
   onSelectionChanged() {
+    if (this.isSelecting) {
+      return;
+    }
+
     const { isIOS, isWinphone, isAndroid } = this.capabilities;
-    const wait = isIOS || isWinphone || isAndroid ? INPUT_DELAY : 100;
-    this.selectionChangedHandler = discourseDebounce(
+    const wait = isIOS || isWinphone || isAndroid ? INPUT_DELAY : 25;
+    this.selectionChangeHandler = discourseDebounce(
       this,
       this.selectionChanged,
       wait
@@ -227,37 +264,14 @@ export default class PostTextSelection extends Component {
   }
 
   @bind
-  mousedown(event) {
-    this.holdingMouseDown = false;
-
-    if (!event.target.closest(".cooked")) {
-      return;
-    }
-
-    this.isMousedown = true;
-    this.holdingMouseDownHandler = discourseLater(() => {
-      this.holdingMouseDown = true;
-    }, 100);
+  mousedown() {
+    this.isSelecting = true;
   }
 
   @bind
-  async mouseup() {
-    this.prevSelection = null;
-    this.isMousedown = false;
-
-    if (this.holdingMouseDown) {
-      this.onSelectionChanged();
-    }
-  }
-
-  @bind
-  selectionchange() {
-    cancel(this.selectionChangeHandler);
-    this.selectionChangeHandler = discourseLater(() => {
-      if (!this.isMousedown) {
-        this.onSelectionChanged();
-      }
-    }, 100);
+  mouseup() {
+    this.isSelecting = false;
+    this.onSelectionChanged();
   }
 
   get post() {
@@ -270,14 +284,46 @@ export default class PostTextSelection extends Component {
     return this.siteSettings.enable_fast_edit && this.post?.can_edit;
   }
 
+  get canCopyQuote() {
+    return (
+      this.siteSettings.enable_quote_copy &&
+      this.currentUser?.get("user_option.enable_quoting")
+    );
+  }
+
+  // on Desktop, shows the bar at the beginning of the selection
+  // on Mobile, shows the bar at the end of the selection
+  @cached
+  get shouldRenderUnder() {
+    const { isIOS, isAndroid, isOpera } = this.capabilities;
+    return this.site.isMobileDevice || isIOS || isAndroid || isOpera;
+  }
+
+  @action
+  handleTopicScroll() {
+    if (this.site.mobileView) {
+      this.debouncedSelectionChanged = debounce(
+        this,
+        this.selectionChanged,
+        { force: true },
+        250,
+        false
+      );
+    }
+  }
+
   @action
   async insertQuote() {
     await this.args.selectText();
     await this.hideToolbar();
   }
 
+  @action
+  async buildQuote() {
+    return await this.args.buildQuoteMarkdown();
+  }
+
   <template>
-    {{! template-lint-disable modifier-name-case }}
     <div
       {{this.documentListeners}}
       {{this.appEventsListeners}}

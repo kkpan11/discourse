@@ -6,12 +6,15 @@
   --topic-body-width: #{$topic-body-width};
   --topic-body-width-padding: #{$topic-body-width-padding};
   --topic-avatar-width: #{$topic-avatar-width};
-  --d-border-radius: initial;
-  --d-border-radius-large: initial;
+  --d-border-radius: 2px;
+  --d-border-radius-large: 2px;
   --d-nav-pill-border-radius: var(--d-border-radius);
-  --d-button-border-radius: var(--d-border-radius);
-  --d-input-border-radius: var(--d-border-radius);
+  --d-button-border-radius: 2px;
+  --d-input-border-radius: 2px;
   --d-content-background: initial;
+  --d-font-family--monospace: ui-monospace, "Cascadia Mono", "Segoe UI Mono",
+    "Liberation Mono", Menlo, Monaco, Consolas, monospace;
+  --d-button-transition: none;
 }
 
 // --------------------------------------------------
@@ -114,6 +117,10 @@ img {
   vertical-align: middle;
 }
 
+.svg-icon {
+  color: inherit;
+}
+
 // Forms
 // --------------------------------------------------
 
@@ -199,4 +206,11 @@ input[type="submit"] {
       margin-right: 0;
     }
   }
+}
+
+// Inputs
+// --------------------------------------------------
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--tertiary);
 }

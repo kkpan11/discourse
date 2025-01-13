@@ -1,7 +1,7 @@
 import Component from "@glimmer/component";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
 import { modifier } from "ember-modifier";
-import deprecated from "discourse-common/lib/deprecated";
+import deprecated from "discourse/lib/deprecated";
 
 export default class DPopover extends Component {
   @service tooltip;
@@ -31,7 +31,6 @@ export default class DPopover extends Component {
   });
 
   <template>
-    {{! template-lint-disable modifier-name-case }}
     <div style="display:inline-flex;" {{this.registerDTooltip}}>
       {{yield}}
     </div>

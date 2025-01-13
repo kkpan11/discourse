@@ -2,8 +2,8 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import { extractError } from "discourse/lib/ajax-error";
+import { i18n } from "discourse-i18n";
 import AdminUser from "admin/models/admin-user";
-import I18n from "I18n";
 
 export default class DeleteUserPostsProgress extends Component {
   @tracked deletedPosts = 0;
@@ -36,7 +36,7 @@ export default class DeleteUserPostsProgress extends Component {
       AdminUser.find(this.args.model.user.id).then((u) =>
         this.args.model.user.setProperties(u)
       );
-      this.flash = extractError(e, I18n.t("admin.user.delete_posts_failed"));
+      this.flash = extractError(e, i18n("admin.user.delete_posts_failed"));
     }
   }
 }

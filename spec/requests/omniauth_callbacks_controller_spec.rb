@@ -3,7 +3,7 @@
 require "discourse_connect_base"
 
 RSpec.describe Users::OmniauthCallbacksController do
-  fab!(:user) { Fabricate(:user) }
+  fab!(:user)
 
   before { OmniAuth.config.test_mode = true }
 
@@ -50,7 +50,6 @@ RSpec.describe Users::OmniauthCallbacksController do
             end
             .new
 
-        provider.enabled_setting = "ubuntu_login_enabled"
         provider
       end
 
@@ -164,8 +163,6 @@ RSpec.describe Users::OmniauthCallbacksController do
     end
 
     context "when in readonly mode" do
-      use_redis_snapshotting
-
       it "should return a 503" do
         Discourse.enable_readonly_mode
 
@@ -175,8 +172,6 @@ RSpec.describe Users::OmniauthCallbacksController do
     end
 
     context "when in staff writes only mode" do
-      use_redis_snapshotting
-
       before { Discourse.enable_readonly_mode(Discourse::STAFF_WRITES_ONLY_MODE_KEY) }
 
       it "returns a 503 for non-staff" do
@@ -398,6 +393,7 @@ RSpec.describe Users::OmniauthCallbacksController do
 
         user.reload
         expect(user.email_confirmed?).to eq(true)
+        expect(user.user_auth_tokens.last.authenticated_with_oauth).to be true
       end
 
       it "should return the authenticated response with the correct path for subfolders" do
@@ -629,6 +625,21 @@ RSpec.describe Users::OmniauthCallbacksController do
 
           expect(response.status).to eq(302)
           expect(JSON.parse(cookies[:authentication_data])["email"]).to eq(user.email)
+        end
+      end
+
+      context "when user has TOTP enabled but enforce_second_factor_on_external_auth is false" do
+        before { user.create_totp(enabled: true) }
+
+        it "should return the right response" do
+          SiteSetting.enforce_second_factor_on_external_auth = false
+          get "/auth/google_oauth2/callback.json"
+
+          expect(response.status).to eq(302)
+
+          data = JSON.parse(cookies[:authentication_data])
+
+          expect(data["authenticated"]).to eq(true)
         end
       end
 
@@ -1100,6 +1111,54 @@ RSpec.describe Users::OmniauthCallbacksController do
       )
 
       Rails.application.env_config["omniauth.auth"] = OmniAuth.config.mock_auth[:google_oauth2]
+    end
+  end
+
+  describe "with a fake provider" do
+    class FakeAuthenticator < Auth::ManagedAuthenticator
+      class Strategy
+        include OmniAuth::Strategy
+        def other_phase
+          [418, {}, ["I am a teapot"]]
+        end
+      end
+
+      def name
+        "fake"
+      end
+
+      def enabled?
+        false
+      end
+
+      def register_middleware(omniauth)
+        omniauth.provider Strategy, name: :fake
+      end
+    end
+
+    let(:fake_auth_provider) { Auth::AuthProvider.new(authenticator: FakeAuthenticator.new) }
+
+    before do
+      DiscoursePluginRegistry.register_auth_provider(fake_auth_provider)
+      OmniAuth.config.test_mode = false
+    end
+
+    after { DiscoursePluginRegistry.auth_providers.delete(fake_auth_provider) }
+
+    it "does not run 'other_phase' for disabled auth methods" do
+      get "/auth/fake/blah"
+      expect(response.status).to eq(404)
+    end
+
+    it "does not leak 'other_phase' for disabled auth methods onto other methods" do
+      get "/auth/twitter/blah"
+      expect(response.status).to eq(404)
+    end
+
+    it "runs 'other_phase' for enabled auth methods" do
+      FakeAuthenticator.any_instance.stubs(:enabled?).returns(true)
+      get "/auth/fake/blah"
+      expect(response.status).to eq(418)
     end
   end
 end

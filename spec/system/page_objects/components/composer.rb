@@ -10,6 +10,14 @@ module PageObjects
         page.has_css?("#{COMPOSER_ID}.open")
       end
 
+      def closed?
+        page.has_css?("#{COMPOSER_ID}.closed", visible: :all)
+      end
+
+      def minimized?
+        page.has_css?("#{COMPOSER_ID}.draft")
+      end
+
       def open_composer_actions
         find(".composer-action-title .btn").click
         self
@@ -27,6 +35,17 @@ module PageObjects
 
       def fill_content(content)
         composer_input.fill_in(with: content)
+        self
+      end
+
+      def minimize
+        find("#{COMPOSER_ID} .toggle-minimize").click
+        self
+      end
+
+      def append_content(content)
+        current_content = composer_input.value
+        composer_input.set(current_content + content)
         self
       end
 
@@ -88,6 +107,10 @@ module PageObjects
 
       def preview
         find("#{COMPOSER_ID} .d-editor-preview-wrapper")
+      end
+
+      def has_discard_draft_modal?
+        page.has_css?(".discard-draft-modal")
       end
 
       def has_emoji_autocomplete?
@@ -167,7 +190,7 @@ module PageObjects
       end
 
       def has_form_template_field_error?(error)
-        page.has_css?(".form-template-field__error", text: error)
+        page.has_css?(".form-template-field__error", text: error, visible: :all)
       end
 
       def has_form_template_field_label?(label)
@@ -176,6 +199,14 @@ module PageObjects
 
       def has_form_template_field_description?(description)
         page.has_css?(".form-template-field__description", text: description)
+      end
+
+      def has_post_error?(error)
+        page.has_css?(".popup-tip", text: error, visible: all)
+      end
+
+      def has_no_post_error?(error)
+        page.has_no_css?(".popup-tip", text: error, visible: all)
       end
 
       def composer_input
@@ -197,6 +228,7 @@ module PageObjects
           const index = composer.value.indexOf(text);
           const position = index + text.length;
 
+          composer.focus();
           composer.setSelectionRange(position, position);
         JS
       end
@@ -204,7 +236,16 @@ module PageObjects
       def select_all
         execute_script(<<~JS, text)
           const composer = document.querySelector("#{COMPOSER_ID} .d-editor-input");
+          composer.focus();
           composer.setSelectionRange(0, composer.value.length);
+        JS
+      end
+
+      def select_range(start_index, length)
+        execute_script(<<~JS, text)
+          const composer = document.querySelector("#{COMPOSER_ID} .d-editor-input");
+          composer.focus();
+          composer.setSelectionRange(#{start_index}, #{length});
         JS
       end
 

@@ -18,24 +18,27 @@ class ThemeJavascriptCompiler
     @@terser_disabled = false
   end
 
-  def initialize(theme_id, theme_name)
+  def initialize(theme_id, theme_name, minify: true)
     @theme_id = theme_id
     @output_tree = []
     @theme_name = theme_name
+    @minify = minify
   end
 
   def compile!
     if !@compiled
       @compiled = true
       @output_tree.freeze
+
       output =
         if !has_content?
           { "code" => "" }
-        elsif @@terser_disabled
+        elsif @@terser_disabled || !@minify
           { "code" => raw_content }
         else
           DiscourseJsProcessor::Transpiler.new.terser(@output_tree.to_h, terser_config)
         end
+
       @content = output["code"]
       @source_map = output["map"]
     end
@@ -92,7 +95,7 @@ class ThemeJavascriptCompiler
     JS
   end
 
-  def append_tree(tree, for_tests: false)
+  def append_tree(tree, include_variables: true)
     # Replace legacy extensions
     tree.transform_keys! do |filename|
       if filename.ends_with? ".js.es6"
@@ -168,9 +171,9 @@ class ThemeJavascriptCompiler
     # Transpile and write to output
     tree.each_pair do |filename, content|
       module_name, extension = filename.split(".", 2)
-      module_name = "test/#{module_name}" if for_tests
+
       if extension == "js" || extension == "gjs"
-        append_module(content, module_name, extension)
+        append_module(content, module_name, extension, include_variables:)
       elsif extension == "hbs"
         append_ember_template(module_name, content)
       elsif extension == "hbr"
@@ -206,24 +209,35 @@ class ThemeJavascriptCompiler
   end
 
   def raw_template_name(name)
-    name = name.sub(/\.(raw|hbr)\z/, "")
-    name.inspect
+    name.sub(/\.(raw|hbr)\z/, "")
   end
 
   def append_raw_template(name, hbs_template)
     compiled =
       DiscourseJsProcessor::Transpiler.new.compile_raw_template(hbs_template, theme_id: @theme_id)
     source_for_comment = hbs_template.gsub("*/", '*\/').indent(4, " ")
-    @output_tree << ["#{name}.js", <<~JS]
-      (function() {
-        /*
+    modern_replacement_marker = hbs_template.include?("{{!-- has-modern-replacement --}}")
+
+    source = <<~JS
+      /*
       #{source_for_comment}
-        */
-        const addRawTemplate = requirejs('discourse-common/lib/raw-templates').addRawTemplate;
-        const template = requirejs('discourse-common/lib/raw-handlebars').template(#{compiled});
-        addRawTemplate(#{raw_template_name(name)}, template);
-      })();
+      */
+
+      import { template as compiler } from "discourse/lib/raw-handlebars";
+      import { addRawTemplate } from "discourse/lib/raw-templates";
+
+      let template = compiler(#{compiled});
+
+      addRawTemplate(#{raw_template_name(name).to_json}, template, {
+        themeId: #{@theme_id},
+        themeName: #{@theme_name.to_json},
+        hasModernReplacement: #{modern_replacement_marker}
+      });
+
+      export default template;
     JS
+
+    append_module source, "raw-templates/#{raw_template_name(name)}", "js", include_variables: false
   rescue MiniRacer::RuntimeError, DiscourseJsProcessor::TranspileError => ex
     raise CompileError.new ex.message
   end
@@ -238,6 +252,7 @@ class ThemeJavascriptCompiler
 
     script = "#{theme_settings}#{script}" if include_variables
     transpiler = DiscourseJsProcessor::Transpiler.new
+
     @output_tree << ["#{original_filename}.#{extension}", <<~JS]
       if ('define' in window) {
       #{transpiler.perform(script, "", name, theme_id: @theme_id, extension: extension).strip}

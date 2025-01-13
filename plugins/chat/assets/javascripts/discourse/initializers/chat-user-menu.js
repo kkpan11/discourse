@@ -1,6 +1,7 @@
+import getURL from "discourse/lib/get-url";
 import { withPluginApi } from "discourse/lib/plugin-api";
 import { formatUsername } from "discourse/lib/utilities";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 import slugifyChannel from "discourse/plugins/chat/discourse/lib/slugify-channel";
 
 export default {
@@ -18,32 +19,30 @@ export default {
           "chat_invitation",
           (NotificationItemBase) => {
             return class extends NotificationItemBase {
+              linkTitle = i18n("notifications.titles.chat_invitation");
+              icon = "link";
+              description = i18n("notifications.chat_invitation");
+
               get linkHref() {
+                const data = this.notification.data;
                 const slug = slugifyChannel({
-                  title: this.notification.data.chat_channel_title,
-                  slug: this.notification.data.chat_channel_slug,
+                  title: data.chat_channel_title,
+                  slug: data.chat_channel_slug,
                 });
-                return `/chat/c/${slug || "-"}/${
-                  this.notification.data.chat_channel_id
-                }/${this.notification.data.chat_message_id}`;
-              }
 
-              get linkTitle() {
-                return I18n.t("notifications.titles.chat_invitation");
-              }
+                let url = `/chat/c/${slug || "-"}/${data.chat_channel_id}`;
 
-              get icon() {
-                return "link";
+                if (data.chat_message_id) {
+                  url += `/${data.chat_message_id}`;
+                }
+
+                return getURL(url);
               }
 
               get label() {
                 return formatUsername(
                   this.notification.data.invited_by_username
                 );
-              }
-
-              get description() {
-                return I18n.t("notifications.chat_invitation");
               }
             };
           }
@@ -67,11 +66,11 @@ export default {
                 } else {
                   notificationRoute += `/${this.notification.data.chat_message_id}`;
                 }
-                return notificationRoute;
+                return getURL(notificationRoute);
               }
 
               get linkTitle() {
-                return I18n.t("notifications.titles.chat_mention");
+                return i18n("notifications.titles.chat_mention");
               }
 
               get icon() {
@@ -96,10 +95,47 @@ export default {
 
                 const i18nSuffix = identifier ? "other_plain" : "direct";
 
-                return I18n.t(`${i18nPrefix}.${i18nSuffix}`, {
+                return i18n(`${i18nPrefix}.${i18nSuffix}`, {
                   identifier,
                   channel: this.notification.data.chat_channel_title,
                 });
+              }
+            };
+          }
+        );
+
+        api.registerNotificationTypeRenderer(
+          "chat_watched_thread",
+          (NotificationItemBase) => {
+            return class extends NotificationItemBase {
+              icon = "discourse-threads";
+              linkTitle = i18n("notifications.titles.chat_watched_thread");
+              description = this.notification.data.description;
+
+              get label() {
+                const data = this.notification.data;
+
+                if (data.user_ids.length > 2) {
+                  return i18n("notifications.chat_watched_thread_label", {
+                    username: formatUsername(data.username2),
+                    count: data.user_ids.length - 1,
+                  });
+                } else if (data.user_ids.length === 2) {
+                  return i18n("notifications.chat_watched_thread_label", {
+                    username: formatUsername(data.username2),
+                    username2: formatUsername(data.username),
+                    count: 1,
+                  });
+                } else {
+                  return formatUsername(data.username);
+                }
+              }
+
+              get linkHref() {
+                const data = this.notification.data;
+                return getURL(
+                  `/chat/c/-/${data.chat_channel_id}/t/${data.chat_thread_id}/${data.chat_message_id}`
+                );
               }
             };
           }
@@ -124,7 +160,8 @@ export default {
             get count() {
               return (
                 this.getUnreadCountForType("chat_mention") +
-                this.getUnreadCountForType("chat_invitation")
+                this.getUnreadCountForType("chat_invitation") +
+                this.getUnreadCountForType("chat_watched_thread")
               );
             }
 
@@ -134,6 +171,7 @@ export default {
                 "chat_mention",
                 "chat_message",
                 "chat_quoted",
+                "chat_watched_thread",
               ];
             }
           };

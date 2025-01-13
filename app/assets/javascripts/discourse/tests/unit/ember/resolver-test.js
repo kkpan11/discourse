@@ -1,8 +1,9 @@
 import { setupTest } from "ember-qunit";
 import { module, test } from "qunit";
+import { withSilencedDeprecations } from "discourse/lib/deprecated";
+import DiscourseTemplateMap from "discourse/lib/discourse-template-map";
+import { buildResolver, setResolverOption } from "discourse/resolver";
 import { registerTemporaryModule } from "discourse/tests/helpers/temporary-module-helper";
-import DiscourseTemplateMap from "discourse-common/lib/discourse-template-map";
-import { buildResolver, setResolverOption } from "discourse-common/resolver";
 
 let resolver;
 
@@ -247,29 +248,31 @@ module("Unit | Ember | resolver", function (hooks) {
 
     setResolverOption("mobileView", true);
 
-    // Default with mobile/ added
-    lookupTemplate(
-      assert,
-      "template:foo",
-      "discourse/templates/mobile/foo",
-      "finding mobile version even if normal one is not present"
-    );
+    withSilencedDeprecations("discourse.mobile-templates", () => {
+      // Default with mobile/ added
+      lookupTemplate(
+        assert,
+        "template:foo",
+        "discourse/templates/mobile/foo",
+        "finding mobile version even if normal one is not present"
+      );
 
-    // Default with mobile preferred
-    lookupTemplate(
-      assert,
-      "template:bar",
-      "discourse/templates/mobile/bar",
-      "preferring mobile version when both mobile and normal versions are present"
-    );
+      // Default with mobile preferred
+      lookupTemplate(
+        assert,
+        "template:bar",
+        "discourse/templates/mobile/bar",
+        "preferring mobile version when both mobile and normal versions are present"
+      );
 
-    // Default when mobile not present
-    lookupTemplate(
-      assert,
-      "template:baz",
-      "discourse/templates/baz",
-      "falling back to a normal version when mobile version is not present"
-    );
+      // Default when mobile not present
+      lookupTemplate(
+        assert,
+        "template:baz",
+        "discourse/templates/baz",
+        "falling back to a normal version when mobile version is not present"
+      );
+    });
   });
 
   test("resolves templates to plugin and theme namespaces", function (assert) {
@@ -292,20 +295,24 @@ module("Unit | Ember | resolver", function (hooks) {
     );
 
     // Defined in core and plugin
-    lookupTemplate(
-      assert,
-      "template:bar",
-      "discourse/plugins/my-plugin/discourse/templates/bar",
-      "prefers plugin version over core"
-    );
+    withSilencedDeprecations("discourse.resolver-template-overrides", () => {
+      lookupTemplate(
+        assert,
+        "template:bar",
+        "discourse/plugins/my-plugin/discourse/templates/bar",
+        "prefers plugin version over core"
+      );
+    });
 
     // Defined in core and plugin and theme
-    lookupTemplate(
-      assert,
-      "template:baz",
-      "discourse/theme-12/discourse/templates/baz",
-      "prefers theme version over plugin and core"
-    );
+    withSilencedDeprecations("discourse.resolver-template-overrides", () => {
+      lookupTemplate(
+        assert,
+        "template:baz",
+        "discourse/theme-12/discourse/templates/baz",
+        "prefers theme version over plugin and core"
+      );
+    });
 
     // Defined in core only
     lookupTemplate(
@@ -327,28 +334,33 @@ module("Unit | Ember | resolver", function (hooks) {
 
     setResolverOption("mobileView", true);
 
-    // Default with plugin template override
-    lookupTemplate(
-      assert,
-      "template:foo",
-      "discourse/plugins/my-plugin/discourse/templates/mobile/foo",
-      "finding plugin version even if normal one is not present"
-    );
+    withSilencedDeprecations(
+      ["discourse.mobile-templates", "discourse.resolver-template-overrides"],
+      () => {
+        // Default with plugin template override
+        lookupTemplate(
+          assert,
+          "template:foo",
+          "discourse/plugins/my-plugin/discourse/templates/mobile/foo",
+          "finding plugin version even if normal one is not present"
+        );
 
-    // Default with plugin mobile added, takes precedence over non-mobile
-    lookupTemplate(
-      assert,
-      "template:bar",
-      "discourse/plugins/my-plugin/discourse/templates/mobile/bar",
-      "preferring plugin mobile version when both non-mobile plugin version is also present"
-    );
+        // Default with plugin mobile added, takes precedence over non-mobile
+        lookupTemplate(
+          assert,
+          "template:bar",
+          "discourse/plugins/my-plugin/discourse/templates/mobile/bar",
+          "preferring plugin mobile version when both non-mobile plugin version is also present"
+        );
 
-    // Default with when non-plugin mobile version is present
-    lookupTemplate(
-      assert,
-      "template:baz",
-      "discourse/plugins/my-plugin/discourse/templates/mobile/baz",
-      "preferring plugin mobile version over non-plugin mobile version"
+        // Default with when non-plugin mobile version is present
+        lookupTemplate(
+          assert,
+          "template:baz",
+          "discourse/plugins/my-plugin/discourse/templates/mobile/baz",
+          "preferring plugin mobile version over non-plugin mobile version"
+        );
+      }
     );
   });
 
@@ -595,96 +607,6 @@ module("Unit | Ember | resolver", function (hooks) {
       "template:foo/bar/baz",
       "discourse/templates/not_found",
       ""
-    );
-  });
-
-  test("resolves templates with 'wizard' prefix", function (assert) {
-    setTemplates([
-      "wizard/templates/foo",
-      "discourse/templates/wizard_bar",
-      "discourse/templates/wizard.bar",
-      "wizard/templates/bar",
-      "wizard/templates/dashboard_general",
-      "discourse/templates/wizard-baz-qux",
-      "javascripts/wizard/plugin-template",
-    ]);
-
-    // Switches prefix to wizard/templates when underscored
-    lookupTemplate(
-      assert,
-      "template:wizard_foo",
-      "wizard/templates/foo",
-      "when prefix is separated by underscore"
-    );
-
-    // Switches prefix to wizard/templates when dotted
-    lookupTemplate(
-      assert,
-      "template:wizard.foo",
-      "wizard/templates/foo",
-      "when prefix is separated by dot"
-    );
-
-    // Doesn't match unseparated prefix
-    lookupTemplate(
-      assert,
-      "template:wizardfoo",
-      undefined,
-      "but not when prefix is not separated in any way"
-    );
-
-    // Prioritized the default match when underscored
-    lookupTemplate(
-      assert,
-      "template:wizard_bar",
-      "discourse/templates/wizard_bar",
-      "but not when template with the exact underscored name exists"
-    );
-
-    // Prioritized the default match when dotted
-    lookupTemplate(
-      assert,
-      "template:wizard.bar",
-      "discourse/templates/wizard.bar",
-      "but not when template with the exact dotted name exists"
-    );
-
-    lookupTemplate(
-      assert,
-      "template:wizard-dashboard-general",
-      "wizard/templates/dashboard_general",
-      "finds namespaced and underscored version"
-    );
-
-    lookupTemplate(
-      assert,
-      "template:wizard-baz/qux",
-      "discourse/templates/wizard-baz-qux",
-      "also tries dasherized"
-    );
-  });
-
-  test("resolves component templates with 'wizard' prefix to 'wizard/templates/' namespace", function (assert) {
-    setTemplates([
-      "wizard/templates/components/foo",
-      "discourse/templates/components/bar",
-      "wizard/templates/components/bar",
-    ]);
-
-    // Looks for components in wizard/templates
-    lookupTemplate(
-      assert,
-      "template:components/foo",
-      "wizard/templates/components/foo",
-      "uses wizard template component when no standard match"
-    );
-
-    // Prioritized non-wizard component
-    lookupTemplate(
-      assert,
-      "template:components/bar",
-      "discourse/templates/components/bar",
-      "uses standard match when both exist"
     );
   });
 

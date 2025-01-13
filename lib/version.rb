@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
 module Discourse
-  VERSION_REGEXP ||= /\A\d+\.\d+\.\d+(\.beta\d+)?\z/
-  VERSION_COMPATIBILITY_FILENAME ||= ".discourse-compatibility"
-
+  VERSION_REGEXP = /\A\d+\.\d+\.\d+(\.beta\d+)?\z/
+  VERSION_COMPATIBILITY_FILENAME = ".discourse-compatibility"
   # work around reloader
   unless defined?(::Discourse::VERSION)
     module VERSION #:nodoc:
-      STRING = "3.2.0.beta2-dev"
+      # Use the `version_bump:*` rake tasks to update this value
+      STRING = "3.4.0.beta4-dev"
 
       PARTS = STRING.split(".")
       private_constant :PARTS
@@ -15,8 +15,8 @@ module Discourse
       MAJOR = PARTS[0].to_i
       MINOR = PARTS[1].to_i
       TINY = PARTS[2].to_i
-      PRE = PARTS[3]&.split("-", 2)&.first
-      DEV = PARTS[3]&.split("-", 2)&.second
+      PRE = PARTS[3]&.split("-", 2)&.[](0)
+      DEV = PARTS[3]&.split("-", 2)&.[](1)
     end
   end
 
@@ -36,7 +36,7 @@ module Discourse
   #  2.4.4.beta6: some-other-branch-ref
   #  2.4.2.beta1: v1-tag
   def self.find_compatible_resource(version_list, target_version = ::Discourse::VERSION::STRING)
-    return unless version_list.present?
+    return if version_list.blank?
 
     begin
       version_list = YAML.safe_load(version_list)
@@ -69,7 +69,7 @@ module Discourse
                 "Invalid version specifier operator for '#{req_operator} #{req_version}'. Operator must be one of <= or <"
         end
 
-        resolved_requirement = Gem::Requirement.new("#{req_operator} #{req_version.to_s}")
+        resolved_requirement = Gem::Requirement.new("#{req_operator} #{req_version}")
         resolved_requirement.satisfied_by?(parsed_target_version)
       end
 

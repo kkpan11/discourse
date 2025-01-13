@@ -1,8 +1,10 @@
-import { getOwner, setOwner } from "@ember/application";
 import { get } from "@ember/object";
+import { getOwner, setOwner } from "@ember/owner";
 import { camelize } from "@ember/string";
 import { Promise } from "rsvp";
 import { h } from "virtual-dom";
+import { isProduction } from "discourse/lib/environment";
+import { deepMerge } from "discourse/lib/object";
 import { consolePrefix } from "discourse/lib/source-identifier";
 import DecoratorHelper from "discourse/widgets/decorator-helper";
 import {
@@ -24,9 +26,7 @@ import {
   WidgetTouchMoveHook,
   WidgetTouchStartHook,
 } from "discourse/widgets/hooks";
-import { isProduction } from "discourse-common/config/environment";
-import { deepMerge } from "discourse-common/lib/object";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 const _registry = {};
 
@@ -40,9 +40,17 @@ export function deleteFromRegistry(name) {
 
 const _decorators = {};
 
-export function decorateWidget(widgetName, cb) {
-  _decorators[widgetName] = _decorators[widgetName] || [];
-  _decorators[widgetName].push(cb);
+export function decorateWidget(decorateIdentifier, cb) {
+  const widgetName = decorateIdentifier.split(":")[0];
+  if (!_registry[widgetName]) {
+    // eslint-disable-next-line no-console
+    console.error(
+      consolePrefix(),
+      `decorateWidget: Could not find widget '${widgetName}' in registry`
+    );
+  }
+  _decorators[decorateIdentifier] ??= [];
+  _decorators[decorateIdentifier].push(cb);
 }
 
 export function traverseCustomWidgets(tree, callback) {
@@ -175,6 +183,7 @@ export default class Widget {
     }
   }
 
+  init() {}
   transform() {
     return {};
   }
@@ -182,8 +191,6 @@ export default class Widget {
   defaultState() {
     return {};
   }
-
-  init() {}
 
   destroy() {}
 
@@ -322,11 +329,17 @@ export default class Widget {
 
     const view = this._findView();
     if (view) {
-      const method = view.get(name);
-      if (!method) {
-        // eslint-disable-next-line no-console
-        console.warn(`${name} not found`);
-        return;
+      let method;
+
+      if (typeof name === "function") {
+        method = name;
+      } else {
+        method = view.get(name);
+        if (!method) {
+          // eslint-disable-next-line no-console
+          console.warn(`${name} not found`);
+          return;
+        }
       }
 
       if (typeof method === "string") {
@@ -494,7 +507,7 @@ export default class Widget {
       if (typeof this.title === "function") {
         attributes.title = this.title(attrs, state);
       } else {
-        attributes.title = I18n.t(this.title);
+        attributes.title = i18n(this.title);
       }
     }
 

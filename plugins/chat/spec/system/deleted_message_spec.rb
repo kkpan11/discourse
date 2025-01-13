@@ -15,19 +15,14 @@ RSpec.describe "Deleted message", type: :system do
   end
 
   context "when deleting a message" do
+    fab!(:message_1) { Fabricate(:chat_message, chat_channel: channel_1) }
+
     it "shows as deleted" do
       chat_page.visit_channel(channel_1)
-      channel_page.send_message
 
-      expect(page).to have_css(".-persisted")
+      channel_page.messages.delete(message_1)
 
-      last_message = find(".chat-message-container:last-child")
-      channel_page.messages.delete(OpenStruct.new(id: last_message["data-id"]))
-
-      expect(channel_page.messages).to have_deleted_message(
-        OpenStruct.new(id: last_message["data-id"]),
-        count: 1,
-      )
+      expect(channel_page.messages).to have_deleted_message(message_1, count: 1)
     end
 
     it "does not error when coming back to the channel from another channel" do
@@ -64,11 +59,11 @@ RSpec.describe "Deleted message", type: :system do
 
         other_user = Fabricate(:admin)
         chat_system_user_bootstrap(user: other_user, channel: channel_1)
-        using_session(:tab_2) do |session|
+
+        using_session(:tab_2) do
           sign_in(other_user)
           chat_page.visit_channel(channel_1)
           channel_page.messages.delete(message)
-          session.quit
         end
 
         sidebar_component.click_link(channel_1.name)
@@ -85,13 +80,25 @@ RSpec.describe "Deleted message", type: :system do
     fab!(:message_5) { Fabricate(:chat_message, chat_channel: channel_1) }
     fab!(:message_6) { Fabricate(:chat_message, chat_channel: channel_1) }
 
+    it "allows user to bulk delete" do
+      chat_page.visit_channel(channel_1)
+
+      channel_page.messages.select(message_2)
+      channel_page.messages.select(message_4)
+      channel_page.messages.select(message_6)
+      channel_page.selection_management.delete
+      click_button(I18n.t("js.delete"))
+
+      expect(channel_page.messages).to have_deleted_messages(message_2, message_4, message_6)
+    end
+
     it "groups them" do
       chat_page.visit_channel(channel_1)
 
-      channel_page.messages.delete(message_1)
-      channel_page.messages.delete(message_3)
-      channel_page.messages.delete(message_4)
-      channel_page.messages.delete(message_6)
+      trash_message!(message_1)
+      trash_message!(message_3)
+      trash_message!(message_4)
+      trash_message!(message_6)
 
       expect(channel_page.messages).to have_deleted_messages(message_1, message_6)
       expect(channel_page.messages).to have_deleted_message(message_4, count: 2)

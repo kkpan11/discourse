@@ -1,17 +1,13 @@
 # frozen_string_literal: true
 
 RSpec.describe PostActionCreator do
-  fab!(:admin) { Fabricate(:admin) }
-  fab!(:user) { Fabricate(:user) }
-  fab!(:post) { Fabricate(:post) }
+  fab!(:admin)
+  fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
+  fab!(:post)
   let(:like_type_id) { PostActionType.types[:like] }
-
-  before { Group.refresh_automatic_groups! }
 
   describe "rate limits" do
     before { RateLimiter.enable }
-
-    use_redis_snapshotting
 
     it "limits redo/undo" do
       PostActionCreator.like(user, post)
@@ -202,7 +198,11 @@ RSpec.describe PostActionCreator do
 
     context "with existing reviewable" do
       let!(:reviewable) do
-        PostActionCreator.create(Fabricate(:user), post, :inappropriate).reviewable
+        PostActionCreator.create(
+          Fabricate(:user, refresh_auto_groups: true),
+          post,
+          :inappropriate,
+        ).reviewable
       end
 
       it "appends to an existing reviewable if exists" do
@@ -271,18 +271,55 @@ RSpec.describe PostActionCreator do
   end
 
   describe "take_action" do
-    before { PostActionCreator.create(Fabricate(:user), post, :inappropriate) }
+    it "will hide the post" do
+      PostActionCreator
+        .new(
+          Fabricate(:moderator, refresh_auto_groups: true),
+          post,
+          PostActionType.types[:spam],
+          take_action: true,
+        )
+        .perform
+        .reviewable
+      expect(post.reload).to be_hidden
+    end
 
-    it "will agree with the old reviewable" do
-      reviewable =
+    context "when there is another reviewable on the post" do
+      before do
+        PostActionCreator.create(Fabricate(:user, refresh_auto_groups: true), post, :inappropriate)
+      end
+
+      it "will agree with the old reviewable" do
+        reviewable =
+          PostActionCreator
+            .new(
+              Fabricate(:moderator, refresh_auto_groups: true),
+              post,
+              PostActionType.types[:spam],
+              take_action: true,
+            )
+            .perform
+            .reviewable
+        expect(reviewable.reload).to be_approved
+        expect(reviewable.reviewable_scores).to all(be_agreed)
+      end
+    end
+
+    context "when hide_post_sensitivity is low" do
+      before { SiteSetting.hide_post_sensitivity = Reviewable.sensitivities[:low] }
+
+      it "still hides the post without considering the score" do
         PostActionCreator
-          .new(Fabricate(:moderator), post, PostActionType.types[:spam], take_action: true)
+          .new(
+            Fabricate(:moderator, refresh_auto_groups: true),
+            post,
+            PostActionType.types[:spam],
+            take_action: true,
+          )
           .perform
           .reviewable
-      scores = reviewable.reviewable_scores
-      expect(scores[0]).to be_agreed
-      expect(scores[1]).to be_agreed
-      expect(reviewable.reload).to be_approved
+        expect(post.reload).to be_hidden
+      end
     end
   end
 
@@ -307,7 +344,7 @@ RSpec.describe PostActionCreator do
 
       score = result.reviewable.reviewable_scores.last
       expect(score.reason).to eq("queued_by_staff")
-      expect(post.reload.hidden?).to eq(true)
+      expect(post.reload).to be_hidden
     end
 
     it "hides the topic even if it has replies" do

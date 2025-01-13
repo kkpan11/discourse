@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class PushNotificationPusher
-  TOKEN_VALID_FOR_SECONDS ||= 5 * 60
+  TOKEN_VALID_FOR_SECONDS = 5 * 60
   CONNECTION_TIMEOUT_SECONDS = 5
 
   def self.push(user, payload)
@@ -20,27 +20,45 @@ class PushNotificationPusher
         ActionController::Base.helpers.image_url("push-notifications/#{notification_icon_name}.png")
 
       message = {
-        title:
-          payload[:translated_title] ||
-            I18n.t(
-              "discourse_push_notifications.popup.#{Notification.types[payload[:notification_type]]}",
-              site_title: SiteSetting.title,
-              topic: payload[:topic_title],
-              username: payload[:username],
-            ),
+        title: payload[:translated_title] || title(payload),
         body: payload[:excerpt],
         badge: get_badge,
         icon: notification_icon,
         tag: payload[:tag] || "#{Discourse.current_hostname}-#{payload[:topic_id]}",
         base_url: Discourse.base_url,
         url: payload[:post_url],
-        hide_when_active: true,
       }
 
       subscriptions(user).each { |subscription| send_notification(user, subscription, message) }
     end
 
     message
+  end
+
+  def self.title(payload)
+    translation_key =
+      case payload[:notification_type]
+      when Notification.types[:watching_category_or_tag]
+        # For watching_category_or_tag, the notification could be for either a new post or new topic.
+        # Instead of duplicating translations, we can rely on 'watching_first_post' for new topics,
+        # and 'posted' for new posts.
+        type = payload[:post_number] == 1 ? "watching_first_post" : "posted"
+        "discourse_push_notifications.popup.#{type}"
+      else
+        "discourse_push_notifications.popup.#{Notification.types[payload[:notification_type]]}"
+      end
+
+    # Payload modifier used to adjust arguments to the translation
+    payload =
+      DiscoursePluginRegistry.apply_modifier(:push_notification_pusher_title_payload, payload)
+
+    I18n.t(
+      translation_key,
+      site_title: SiteSetting.title,
+      topic: payload[:topic_title],
+      username: payload[:username],
+      group_name: payload[:group_name],
+    )
   end
 
   def self.subscriptions(user)
@@ -90,8 +108,8 @@ class PushNotificationPusher
     end
   end
 
-  MAX_ERRORS ||= 3
-  MIN_ERROR_DURATION ||= 86_400 # 1 day
+  MAX_ERRORS = 3
+  MIN_ERROR_DURATION = 86_400 # 1 day
 
   def self.handle_generic_error(subscription, error, user, endpoint, message)
     subscription.error_count += 1
@@ -147,6 +165,8 @@ class PushNotificationPusher
       if subscription.first_error_at || subscription.error_count != 0
         subscription.update_columns(error_count: 0, first_error_at: nil)
       end
+
+      DiscourseEvent.trigger(:push_notification_sent, user, message)
     rescue WebPush::ExpiredSubscription
       subscription.destroy!
     rescue WebPush::ResponseError => e

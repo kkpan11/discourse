@@ -1,4 +1,4 @@
-import { convertIconClass } from "discourse-common/lib/icon-library";
+import { convertIconClass } from "discourse/lib/icon-library";
 
 export function grantableBadges(allBadges, userBadges) {
   const granted = userBadges.reduce((map, badge) => {
@@ -24,7 +24,7 @@ export function grantableBadges(allBadges, userBadges) {
 }
 
 export function isBadgeGrantable(badgeId, availableBadges) {
-  return (
+  return !!(
     availableBadges && availableBadges.some((b) => b.get("id") === badgeId)
   );
 }

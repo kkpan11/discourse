@@ -1,5 +1,6 @@
 import { click, fillIn, triggerKeyEvent, visit } from "@ember/test-helpers";
 import { test } from "qunit";
+import { cloneJSON } from "discourse/lib/object";
 import postFixtures from "discourse/tests/fixtures/post";
 import {
   acceptance,
@@ -7,13 +8,10 @@ import {
   query,
   selectText,
 } from "discourse/tests/helpers/qunit-helpers";
-import { cloneJSON } from "discourse-common/lib/object";
 
 acceptance("Fast Edit", function (needs) {
   needs.user();
-  needs.settings({
-    enable_fast_edit: true,
-  });
+  needs.settings({ enable_fast_edit: true });
   needs.pretender((server, helper) => {
     server.get("/posts/419", () => {
       return helper.response(cloneJSON(postFixtures["/posts/398"]));
@@ -45,6 +43,9 @@ acceptance("Fast Edit", function (needs) {
     const textNode = query("#post_1 .cooked p").childNodes[0];
 
     await selectText(textNode, 9);
+
+    assert.dom(".quote-button").exists();
+
     await triggerKeyEvent(document, "keypress", "E");
 
     assert.dom("#fast-edit-input").exists();
@@ -60,7 +61,11 @@ acceptance("Fast Edit", function (needs) {
 
     // Closing
     await selectText(textNode, 9);
+
+    assert.dom(".quote-button").exists();
+
     await triggerKeyEvent(document, "keypress", "E");
+
     assert.dom("#fast-edit-input").exists();
 
     await triggerKeyEvent("#fast-edit-input", "keydown", "Escape");
@@ -79,18 +84,52 @@ acceptance("Fast Edit", function (needs) {
     assert.dom(".d-editor-input").exists();
   });
 
-  test("Opens full composer when editing non-ascii characters", async function (assert) {
+  test("Opens full composer when selection has typographic characters", async function (assert) {
     await visit("/t/internationalization-localization/280");
 
-    query("#post_2 .cooked").append(
-      `Je suis désolé, ”comment ça va”? A bientôt!`
-    );
-    const textNode = query("#post_2 .cooked").childNodes[2];
+    query("#post_2 .cooked").append(`That’s what she said!`);
+    const textNode = query("#post_2 .cooked").childNodes[3];
 
     await selectText(textNode);
     await click(".quote-button .quote-edit-label");
 
     assert.dom("#fast-edit-input").doesNotExist();
     assert.dom(".d-editor-input").exists();
+  });
+
+  test("Works with diacritics", async function (assert) {
+    await visit("/t/internationalization-localization/280");
+
+    query("#post_2 .cooked").append(`Je suis désolé, comment ça va?`);
+    const textNode = query("#post_2 .cooked").childNodes[3];
+
+    await selectText(textNode);
+    await click(".quote-button .quote-edit-label");
+
+    assert.dom("#fast-edit-input").exists();
+  });
+
+  test("Works with CJK ranges", async function (assert) {
+    await visit("/t/internationalization-localization/280");
+
+    query("#post_2 .cooked").append(`这是一个测试`);
+    const textNode = query("#post_2 .cooked").childNodes[3];
+
+    await selectText(textNode);
+    await click(".quote-button .quote-edit-label");
+
+    assert.dom("#fast-edit-input").exists();
+  });
+
+  test("Works with emoji", async function (assert) {
+    await visit("/t/internationalization-localization/280");
+
+    query("#post_2 .cooked").append(`This is great 👍`);
+    const textNode = query("#post_2 .cooked").childNodes[3];
+
+    await selectText(textNode);
+    await click(".quote-button .quote-edit-label");
+
+    assert.dom("#fast-edit-input").exists();
   });
 });

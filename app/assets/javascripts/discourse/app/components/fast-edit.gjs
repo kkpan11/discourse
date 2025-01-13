@@ -1,20 +1,21 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
+import { hash } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
 import DButton from "discourse/components/d-button";
-import { fixQuotes } from "discourse/components/post-text-selection";
+import PluginOutlet from "discourse/components/plugin-outlet";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { translateModKey } from "discourse/lib/utilities";
 import autoFocus from "discourse/modifiers/auto-focus";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 export default class FastEdit extends Component {
-  @tracked value = this.args.initialValue;
   @tracked isSaving = false;
+  @tracked value = this.args.newValue || this.args.initialValue;
 
-  buttonTitle = I18n.t("composer.title", {
+  buttonTitle = i18n("composer.title", {
     modifier: translateModKey("Meta+"),
   });
 
@@ -40,15 +41,24 @@ export default class FastEdit extends Component {
   }
 
   @action
+  updateValueProperty(value) {
+    this.value = value;
+  }
+
+  @action
   async save() {
     this.isSaving = true;
 
     try {
       const result = await ajax(`/posts/${this.args.post.id}`);
-      const newRaw = result.raw.replace(
-        fixQuotes(this.args.initialValue),
-        fixQuotes(this.value)
-      );
+      const newRaw = result.raw.replace(this.args.initialValue, this.value);
+
+      // Warn the user if we failed to update the post
+      if (newRaw === result.raw) {
+        throw new Error(
+          "Failed to update the post. Did your fast edit include a special character?"
+        );
+      }
 
       await this.args.post.save({ raw: newRaw });
     } catch (error) {
@@ -60,7 +70,6 @@ export default class FastEdit extends Component {
   }
 
   <template>
-    {{! template-lint-disable modifier-name-case }}
     {{! template-lint-disable no-pointer-down-event-binding }}
     {{! template-lint-disable no-invalid-interactive }}
     <div class="fast-edit-container" {{on "keydown" this.onKeydown}}>
@@ -68,17 +77,29 @@ export default class FastEdit extends Component {
         {{on "input" this.updateValue}}
         id="fast-edit-input"
         {{autoFocus}}
-      >{{@initialValue}}</textarea>
+      >{{this.value}}</textarea>
 
-      <DButton
-        class="btn-small btn-primary save-fast-edit"
-        @action={{this.save}}
-        @icon="pencil-alt"
-        @label="composer.save_edit"
-        @translatedTitle={{this.buttonTitle}}
-        @isLoading={{this.isSaving}}
-        @disabled={{this.disabled}}
-      />
+      <div class="fast-edit-container__footer">
+        <DButton
+          class="btn-small btn-primary save-fast-edit"
+          @action={{this.save}}
+          @icon="pencil"
+          @label="composer.save_edit"
+          @translatedTitle={{this.buttonTitle}}
+          @isLoading={{this.isSaving}}
+          @disabled={{this.disabled}}
+        />
+
+        <PluginOutlet
+          @name="fast-edit-footer-after"
+          @defaultGlimmer={{true}}
+          @outletArgs={{hash
+            initialValue=@initialValue
+            newValue=@newValue
+            updateValue=this.updateValueProperty
+          }}
+        />
+      </div>
     </div>
   </template>
 }

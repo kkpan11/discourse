@@ -1,26 +1,18 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
+import { waitForPromise } from "@ember/test-waiters";
 import { create } from "virtual-dom";
-import loadScript from "discourse/lib/load-script";
-import { iconNode } from "discourse-common/lib/icon-library";
-import { afterRender } from "discourse-common/utils/decorators";
+import { iconNode } from "discourse/lib/icon-library";
 
 export default class JsonSchemaEditorModal extends Component {
   @tracked editor = null;
-  @tracked value = this.args.value;
+  @tracked value = this.args.model.value;
   @tracked flash;
   @tracked flashType;
 
   get settingName() {
-    return this.args.settingName.replace(/\_/g, " ");
-  }
-
-  @action
-  buildJsonEditor(editor) {
-    loadScript("/javascripts/jsoneditor.js").then(
-      this._loadEditor.bind(this, editor)
-    );
+    return this.args.model.settingName.replace(/\_/g, " ");
   }
 
   @action
@@ -34,7 +26,7 @@ export default class JsonSchemaEditorModal extends Component {
 
     if (!errors.length) {
       this.value = JSON.stringify(this.editor.getValue());
-      this.args.updateValue(this.value);
+      this.args.model.updateValue(this.value);
       this.args.closeModal();
     } else {
       this.flash = errors.mapBy("message").join("\n");
@@ -42,18 +34,20 @@ export default class JsonSchemaEditorModal extends Component {
     }
   }
 
-  @afterRender
-  _loadEditor(editor) {
-    let { JSONEditor } = window;
+  @action
+  async buildJsonEditor(element) {
+    const promise = import("@json-editor/json-editor");
+    waitForPromise(promise);
+    const { JSONEditor } = await promise;
 
-    JSONEditor.defaults.options.theme = "bootstrap4";
+    JSONEditor.defaults.options.theme = "barebones";
     JSONEditor.defaults.iconlibs = {
       discourseIcons: DiscourseJsonSchemaEditorIconlib,
     };
     JSONEditor.defaults.options.iconlib = "discourseIcons";
 
-    this.editor = new JSONEditor(editor, {
-      schema: this.args.jsonSchema,
+    this.editor = new JSONEditor(element, {
+      schema: this.args.model.jsonSchema,
       disable_array_delete_all_rows: true,
       disable_array_delete_last_row: true,
       disable_array_reorder: false,
@@ -62,7 +56,6 @@ export default class JsonSchemaEditorModal extends Component {
       disable_edit_json: true,
       disable_properties: true,
       disable_collapse: false,
-      remove_button_labels: true,
       show_errors: "never",
       startval: this.value ? JSON.parse(this.value) : null,
     });
@@ -72,10 +65,12 @@ export default class JsonSchemaEditorModal extends Component {
 class DiscourseJsonSchemaEditorIconlib {
   constructor() {
     this.mapping = {
-      delete: "trash-alt",
+      delete: "trash-can",
       add: "plus",
       moveup: "arrow-up",
       movedown: "arrow-down",
+      moveleft: "chevron-left",
+      moveright: "chevron-right",
       copy: "copy",
       collapse: "chevron-down",
       expand: "chevron-up",

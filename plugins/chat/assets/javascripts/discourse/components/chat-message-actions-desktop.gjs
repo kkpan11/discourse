@@ -1,23 +1,24 @@
 import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
-import { getOwner } from "@ember/application";
 import { concat, hash } from "@ember/helper";
 import { on } from "@ember/modifier";
 import { action } from "@ember/object";
+import { getOwner } from "@ember/owner";
 import didInsert from "@ember/render-modifiers/modifiers/did-insert";
 import didUpdate from "@ember/render-modifiers/modifiers/did-update";
 import willDestroy from "@ember/render-modifiers/modifiers/will-destroy";
 import { schedule } from "@ember/runloop";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
 import { createPopper } from "@popperjs/core";
+import { and } from "truth-helpers";
 import BookmarkIcon from "discourse/components/bookmark-icon";
 import DButton from "discourse/components/d-button";
 import concatClass from "discourse/helpers/concat-class";
 import DropdownSelectBox from "select-kit/components/dropdown-select-box";
-import and from "truth-helpers/helpers/and";
 import ChatMessageReaction from "discourse/plugins/chat/discourse/components/chat-message-reaction";
 import chatMessageContainer from "discourse/plugins/chat/discourse/lib/chat-message-container";
 import ChatMessageInteractor from "discourse/plugins/chat/discourse/lib/chat-message-interactor";
+import ChatMessageReactionModel from "discourse/plugins/chat/discourse/models/chat-message-reaction";
 
 const MSG_ACTIONS_VERTICAL_PADDING = -10;
 const FULL = "full";
@@ -26,12 +27,29 @@ const REDUCED_WIDTH_THRESHOLD = 500;
 
 export default class ChatMessageActionsDesktop extends Component {
   @service chat;
-  @service chatEmojiPickerManager;
   @service site;
+  @service siteSettings;
+  @service emojiStore;
 
   @tracked size = FULL;
 
   popper = null;
+
+  get favoriteReactions() {
+    const defaultReactions = this.siteSettings.default_emoji_reactions
+      .split("|")
+      .filter(Boolean);
+
+    return this.emojiStore
+      .favoritesForContext(`channel_${this.message.channel.id}`)
+      .concat(defaultReactions)
+      .slice(0, 3)
+      .map(
+        (emoji) =>
+          this.message.reactions.find((reaction) => reaction.emoji === emoji) ||
+          ChatMessageReactionModel.create({ emoji })
+      );
+  }
 
   get message() {
     return this.chat.activeMessage.model;
@@ -53,6 +71,16 @@ export default class ChatMessageActionsDesktop extends Component {
     return this.size === FULL;
   }
 
+  get messageContainer() {
+    return chatMessageContainer(this.message.id, this.context);
+  }
+
+  @action
+  openEmojiPicker(_, event) {
+    event.preventDefault();
+    this.messageInteractor.openEmojiPicker(event.target);
+  }
+
   @action
   onWheel() {
     // prevents menu to stop scroll on the list of messages
@@ -64,24 +92,19 @@ export default class ChatMessageActionsDesktop extends Component {
     this.popper?.destroy();
 
     schedule("afterRender", () => {
-      const messageContainer = chatMessageContainer(
-        this.message.id,
-        this.context
-      );
-
-      if (!messageContainer) {
+      if (!this.messageContainer) {
         return;
       }
 
-      const viewport = messageContainer.closest(".popper-viewport");
+      const viewport = this.messageContainer.closest(".popper-viewport");
       this.size =
         viewport.clientWidth < REDUCED_WIDTH_THRESHOLD ? REDUCED : FULL;
 
-      if (!messageContainer) {
+      if (!this.messageContainer) {
         return;
       }
 
-      this.popper = createPopper(messageContainer, element, {
+      this.popper = createPopper(this.messageContainer, element, {
         placement: "top-end",
         strategy: "fixed",
         modifiers: [
@@ -111,7 +134,6 @@ export default class ChatMessageActionsDesktop extends Component {
   }
 
   <template>
-    {{! template-lint-disable modifier-name-case }}
     {{#if (and this.site.desktopView this.chat.activeMessage.model.persisted)}}
       <div
         {{didInsert this.setup}}
@@ -134,25 +156,22 @@ export default class ChatMessageActionsDesktop extends Component {
           }}
         >
           {{#if this.shouldRenderFavoriteReactions}}
-            {{#each
-              this.messageInteractor.emojiReactions key="emoji"
-              as |reaction|
-            }}
+            {{#each this.favoriteReactions as |reaction|}}
               <ChatMessageReaction
                 @reaction={{reaction}}
                 @onReaction={{this.messageInteractor.react}}
                 @message={{this.message}}
                 @showCount={{false}}
+                @disableTooltip={{true}}
               />
             {{/each}}
           {{/if}}
 
           {{#if this.messageInteractor.canInteractWithMessage}}
             <DButton
-              @action={{this.messageInteractor.openEmojiPicker}}
-              @icon="discourse-emojis"
-              @title="chat.react"
+              @action={{this.openEmojiPicker}}
               @forwardEvent={{true}}
+              @icon="discourse-emojis"
               class="btn-flat react-btn"
             />
           {{/if}}
@@ -161,6 +180,7 @@ export default class ChatMessageActionsDesktop extends Component {
             <DButton
               @action={{this.messageInteractor.toggleBookmark}}
               class="btn-flat bookmark-btn"
+              @translatedTitle={{this.message.bookmark.reminderTitle}}
             >
               <BookmarkIcon @bookmark={{this.message.bookmark}} />
             </DButton>
@@ -182,15 +202,15 @@ export default class ChatMessageActionsDesktop extends Component {
             )
           }}
             <DropdownSelectBox
-              @class="more-buttons secondary-actions"
               @options={{hash
-                icon="ellipsis-v"
+                icon="ellipsis-vertical"
                 placement="left"
                 customStyle="true"
                 btnCustomClasses="btn-flat"
               }}
               @content={{this.messageInteractor.secondaryActions}}
               @onChange={{this.messageInteractor.handleSecondaryActions}}
+              class="more-buttons secondary-actions"
             />
           {{/if}}
         </div>

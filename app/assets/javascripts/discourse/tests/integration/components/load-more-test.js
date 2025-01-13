@@ -23,10 +23,10 @@ module("Integration | Component | load-more", function (hooks) {
 
     await render(hbs`
       <LoadMore @selector=".numbers tr" @action={{this.loadMore}}>
-        <table class="numbers"><tr></tr></table>
+        <table class="numbers"><tbody><tr></tr></tbody></table>
       </LoadMore>
     `);
 
-    assert.ok(this.loadedMore);
+    assert.true(this.loadedMore);
   });
 });

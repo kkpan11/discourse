@@ -8,7 +8,7 @@ require "file_helper"
 
 module FileStore
   class S3Store < BaseStore
-    TOMBSTONE_PREFIX ||= "tombstone/"
+    TOMBSTONE_PREFIX = "tombstone/"
 
     delegate :abort_multipart,
              :presign_multipart_part,
@@ -25,6 +25,7 @@ module FileStore
         S3Helper.new(
           s3_bucket,
           Rails.configuration.multisite ? multisite_tombstone_prefix : TOMBSTONE_PREFIX,
+          use_accelerate_endpoint: SiteSetting.Upload.enable_s3_transfer_acceleration,
         )
     end
 
@@ -93,12 +94,10 @@ module FileStore
           opts[:content_type].presence || MiniMime.lookup_by_filename(filename)&.content_type,
       }
 
-      # add a "content disposition: attachment" header with the original
-      # filename for everything but safe images (not SVG). audio and video will
-      # still stream correctly in HTML players, and when a direct link is
-      # provided to any file but an image it will download correctly in the
-      # browser.
-      if !FileHelper.is_inline_image?(filename)
+      # Only add a "content disposition: attachment" header for svgs
+      # see https://github.com/discourse/discourse/commit/31e31ef44973dc4daaee2f010d71588ea5873b53.
+      # Adding this header for all files would break the ability to view attachments in the browser
+      if FileHelper.is_svg?(filename)
         options[:content_disposition] = ActionDispatch::Http::ContentDisposition.format(
           disposition: "attachment",
           filename: filename,
@@ -162,7 +161,6 @@ module FileStore
         else
           return true
         end
-        return false
       end
 
       return false if SiteSetting.Upload.s3_cdn_url.blank?
@@ -297,10 +295,18 @@ module FileStore
     end
 
     def list_missing_uploads(skip_optimized: false)
-      if SiteSetting.enable_s3_inventory
-        require "s3_inventory"
-        S3Inventory.new(s3_helper, :upload).backfill_etags_and_list_missing
-        S3Inventory.new(s3_helper, :optimized).backfill_etags_and_list_missing unless skip_optimized
+      if s3_inventory_bucket = SiteSetting.s3_inventory_bucket
+        s3_options = {}
+
+        if (s3_inventory_bucket_region = SiteSetting.s3_inventory_bucket_region).present?
+          s3_options[:region] = s3_inventory_bucket_region
+        end
+
+        S3Inventory.new(:upload, s3_inventory_bucket:, s3_options:).backfill_etags_and_list_missing
+
+        unless skip_optimized
+          S3Inventory.new(:optimized, s3_inventory_bucket:).backfill_etags_and_list_missing
+        end
       else
         list_missing(Upload.by_users, "original/")
         list_missing(OptimizedImage, "optimized/") unless skip_optimized

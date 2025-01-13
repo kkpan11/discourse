@@ -2,7 +2,7 @@
 
 RSpec.describe ReviewableScoreSerializer do
   fab!(:reviewable) { Fabricate(:reviewable_flagged_post) }
-  fab!(:admin) { Fabricate(:admin) }
+  fab!(:admin)
 
   describe "#reason" do
     context "with regular links" do
@@ -52,6 +52,15 @@ RSpec.describe ReviewableScoreSerializer do
 
           expect(serialized.reason).to include(link)
         end
+      end
+    end
+
+    context "with custom reasons" do
+      it "serializes it without doing any translation" do
+        custom = "completely custom flag reason"
+        serialized = serialized_score(custom)
+
+        expect(serialized.reason).to eq(custom)
       end
     end
   end

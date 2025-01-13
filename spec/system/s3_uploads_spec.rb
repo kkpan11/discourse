@@ -10,9 +10,7 @@ describe "Uploading files in the composer to S3", type: :system do
   describe "direct S3 uploads" do
     describe "single part uploads" do
       it "uploads custom avatars to S3" do
-        skip_unless_s3_system_specs_enabled!
-
-        setup_s3_system_test
+        setup_or_skip_s3_system_test
         sign_in(current_user)
 
         visit "/my/preferences/account"
@@ -22,12 +20,12 @@ describe "Uploading files in the composer to S3", type: :system do
         attach_file(File.absolute_path(file_from_fixtures("logo.jpg"))) do
           find("#avatar-uploader").click
         end
-        expect(page).to have_css(".avatar-uploader label[data-uploaded]")
+        expect(page).to have_css(".avatar-uploader .avatar-uploader__button[data-uploaded]")
         modal.click_primary_button
         expect(modal).to be_closed
         expect(page).to have_css(
           "#user-avatar-uploads[data-custom-avatar-upload-id]",
-          visible: false,
+          visible: :hidden,
         )
         expect(current_user.reload.uploaded_avatar_id).to eq(
           find("#user-avatar-uploads", visible: false)["data-custom-avatar-upload-id"].to_i,
@@ -37,9 +35,7 @@ describe "Uploading files in the composer to S3", type: :system do
 
     describe "multipart uploads" do
       it "uploads a file in the post composer" do
-        skip_unless_s3_system_specs_enabled!
-
-        setup_s3_system_test
+        setup_or_skip_s3_system_test
         sign_in(current_user)
 
         topic.open_new_topic

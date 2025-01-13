@@ -31,14 +31,17 @@ class RemoteTheme < ActiveRecord::Base
   MAX_ASSET_FILE_SIZE = 8.megabytes
   MAX_THEME_FILE_COUNT = 1024
   MAX_THEME_SIZE = 256.megabytes
+  MAX_THEME_SCREENSHOT_FILE_SIZE = 1.megabyte
+  MAX_THEME_SCREENSHOT_DIMENSIONS = [3840, 2160] # 4K resolution
+  THEME_SCREENSHOT_ALLOWED_FILE_TYPES = %w[.jpg .jpeg .gif .png].freeze
 
   has_one :theme, autosave: false
   scope :joined_remotes,
-        -> {
+        -> do
           joins("JOIN themes ON themes.remote_theme_id = remote_themes.id").where.not(
             remote_url: "",
           )
-        }
+        end
 
   validates_format_of :minimum_discourse_version,
                       :maximum_discourse_version,
@@ -70,20 +73,22 @@ class RemoteTheme < ActiveRecord::Base
     original_filename,
     user: Discourse.system_user,
     theme_id: nil,
-    update_components: nil
+    update_components: nil,
+    run_migrations: true
   )
     update_theme(
       ThemeStore::ZipImporter.new(filename, original_filename),
       user:,
       theme_id:,
       update_components:,
+      run_migrations:,
     )
   end
 
-  # This is only used in the tests environment and is currently not supported for other environments
-  if Rails.env.test?
+  # This is only used in the development and test environment and is currently not supported for other environments
+  if Rails.env.test? || Rails.env.development?
     def self.import_theme_from_directory(directory)
-      update_theme(ThemeStore::DirectoryImporter.new(directory))
+      update_theme(ThemeStore::DirectoryImporter.new(directory), update_components: "none")
     end
   end
 
@@ -91,7 +96,8 @@ class RemoteTheme < ActiveRecord::Base
     importer,
     user: Discourse.system_user,
     theme_id: nil,
-    update_components: nil
+    update_components: nil,
+    run_migrations: true
   )
     importer.import!
 
@@ -106,34 +112,44 @@ class RemoteTheme < ActiveRecord::Base
 
     theme.component = theme_info["component"].to_s == "true"
     theme.child_components = child_components = theme_info["components"].presence || []
+    theme.skip_child_components_update = true if update_components == "none"
 
     remote_theme = new
     remote_theme.theme = theme
     remote_theme.remote_url = ""
-    remote_theme.update_from_remote(importer, skip_update: true)
 
-    theme.save!
+    do_update_child_components = false
 
-    if existing && update_components.present? && update_components != "none"
-      child_components = child_components.map { |url| ThemeStore::GitImporter.new(url.strip).url }
+    theme.transaction do
+      remote_theme.update_from_remote(
+        importer,
+        skip_update: true,
+        already_in_transaction: true,
+        run_migrations:,
+      )
 
-      if update_components == "sync"
-        ChildTheme
-          .joins(child_theme: :remote_theme)
-          .where("remote_themes.remote_url NOT IN (?)", child_components)
-          .delete_all
+      if existing && update_components.present? && update_components != "none"
+        child_components = child_components.map { |url| ThemeStore::GitImporter.new(url.strip).url }
+
+        if update_components == "sync"
+          ChildTheme
+            .joins(child_theme: :remote_theme)
+            .where("remote_themes.remote_url NOT IN (?)", child_components)
+            .delete_all
+        end
+
+        child_components -=
+          theme
+            .child_themes
+            .joins(:remote_theme)
+            .where("remote_themes.remote_url IN (?)", child_components)
+            .pluck("remote_themes.remote_url")
+        theme.child_components = child_components
+        do_update_child_components = true
       end
-
-      child_components -=
-        theme
-          .child_themes
-          .joins(:remote_theme)
-          .where("remote_themes.remote_url IN (?)", child_components)
-          .pluck("remote_themes.remote_url")
-      theme.child_components = child_components
-      theme.update_child_components
     end
 
+    theme.update_child_components if do_update_child_components
     theme
   ensure
     begin
@@ -160,9 +176,9 @@ class RemoteTheme < ActiveRecord::Base
     remote_theme.private_key = private_key
     remote_theme.branch = branch
     remote_theme.remote_url = importer.url
+
     remote_theme.update_from_remote(importer)
 
-    theme.save!
     theme
   ensure
     begin
@@ -209,7 +225,13 @@ class RemoteTheme < ActiveRecord::Base
     end
   end
 
-  def update_from_remote(importer = nil, skip_update: false)
+  def update_from_remote(
+    importer = nil,
+    skip_update: false,
+    raise_if_theme_save_fails: true,
+    already_in_transaction: false,
+    run_migrations: true
+  )
     cleanup = false
 
     unless importer
@@ -231,15 +253,7 @@ class RemoteTheme < ActiveRecord::Base
 
     theme_info["assets"]&.each do |name, relative_path|
       if path = importer.real_path(relative_path)
-        new_path = "#{File.dirname(path)}/#{SecureRandom.hex}#{File.extname(path)}"
-        File.rename(path, new_path) # OptimizedImage has strict file name restrictions, so rename temporarily
-        upload =
-          UploadCreator.new(
-            File.open(new_path),
-            File.basename(relative_path),
-            for_theme: true,
-          ).create_for(theme.user_id)
-
+        upload = create_upload(path, relative_path)
         if !upload.errors.empty?
           raise ImportError,
                 I18n.t(
@@ -255,6 +269,67 @@ class RemoteTheme < ActiveRecord::Base
           type: :theme_upload_var,
           upload_id: upload.id,
         )
+      end
+    end
+
+    # TODO (martin): Until we are ready to roll this out more
+    # widely, let's avoid doing this work for most sites.
+    if SiteSetting.theme_download_screenshots
+      theme_info["screenshots"] = Array.wrap(theme_info["screenshots"]).take(2)
+      theme_info["screenshots"].each_with_index do |relative_path, idx|
+        if path = importer.real_path(relative_path)
+          if !THEME_SCREENSHOT_ALLOWED_FILE_TYPES.include?(File.extname(path))
+            raise ImportError,
+                  I18n.t(
+                    "themes.import_error.screenshot_invalid_type",
+                    file_name: File.basename(path),
+                    accepted_formats: THEME_SCREENSHOT_ALLOWED_FILE_TYPES.join(","),
+                  )
+          end
+
+          if File.size(path) > MAX_THEME_SCREENSHOT_FILE_SIZE
+            raise ImportError,
+                  I18n.t(
+                    "themes.import_error.screenshot_invalid_size",
+                    file_name: File.basename(path),
+                    max_size:
+                      ActiveSupport::NumberHelper.number_to_human_size(
+                        MAX_THEME_SCREENSHOT_FILE_SIZE,
+                      ),
+                  )
+          end
+
+          screenshot_width, screenshot_height = FastImage.size(path)
+          if (screenshot_width.nil? || screenshot_height.nil?) ||
+               screenshot_width > MAX_THEME_SCREENSHOT_DIMENSIONS[0] ||
+               screenshot_height > MAX_THEME_SCREENSHOT_DIMENSIONS[1]
+            raise ImportError,
+                  I18n.t(
+                    "themes.import_error.screenshot_invalid_dimensions",
+                    file_name: File.basename(path),
+                    width: screenshot_width.to_i,
+                    height: screenshot_height.to_i,
+                    max_width: MAX_THEME_SCREENSHOT_DIMENSIONS[0],
+                    max_height: MAX_THEME_SCREENSHOT_DIMENSIONS[1],
+                  )
+          end
+
+          upload = create_upload(path, relative_path)
+          if !upload.errors.empty?
+            raise ImportError,
+                  I18n.t(
+                    "themes.import_error.screenshot",
+                    errors: upload.errors.full_messages.join(","),
+                  )
+          end
+
+          updated_fields << theme.set_field(
+            target: :common,
+            name: "screenshot_#{idx + 1}",
+            type: :theme_screenshot_upload_var,
+            upload_id: upload.id,
+          )
+        end
       end
     end
 
@@ -278,10 +353,12 @@ class RemoteTheme < ActiveRecord::Base
     end
 
     ThemeModifierSet.modifiers.keys.each do |modifier_name|
-      theme.theme_modifier_set.public_send(
-        :"#{modifier_name}=",
-        theme_info.dig("modifiers", modifier_name.to_s),
-      )
+      value = theme_info.dig("modifiers", modifier_name.to_s)
+      if Hash === value && value["type"] == "setting"
+        theme.theme_modifier_set.add_theme_setting_modifier(modifier_name, value["value"])
+      else
+        theme.theme_modifier_set.public_send(:"#{modifier_name}=", value)
+      end
     end
 
     if !theme.theme_modifier_set.valid?
@@ -333,12 +410,6 @@ class RemoteTheme < ActiveRecord::Base
       updated_fields << theme.set_field(**opts.merge(value: value))
     end
 
-    theme.convert_settings
-
-    # Destroy fields that no longer exist in the remote theme
-    field_ids_to_destroy = theme.theme_fields.pluck(:id) - updated_fields.map { |tf| tf&.id }
-    ThemeField.where(id: field_ids_to_destroy).destroy_all
-
     if !skip_update
       self.remote_updated_at = Time.zone.now
       self.remote_version = importer.version
@@ -346,9 +417,32 @@ class RemoteTheme < ActiveRecord::Base
       self.commits_behind = 0
     end
 
-    update_theme_color_schemes(theme, theme_info["color_schemes"]) unless theme.component
+    transaction_block = ->(*) do
+      # Destroy fields that no longer exist in the remote theme
+      field_ids_to_destroy = theme.theme_fields.pluck(:id) - updated_fields.map { |tf| tf&.id }
+      ThemeField.where(id: field_ids_to_destroy).destroy_all
 
-    self.save!
+      update_theme_color_schemes(theme, theme_info["color_schemes"]) unless theme.component
+
+      self.save!
+
+      if raise_if_theme_save_fails
+        theme.save!
+      else
+        raise ActiveRecord::Rollback if !theme.save
+      end
+
+      theme.migrate_settings(start_transaction: false) if run_migrations
+    end
+
+    if already_in_transaction
+      transaction_block.call
+    else
+      self.transaction(&transaction_block)
+    end
+
+    theme.theme_modifier_set.save! if theme.theme_modifier_set.refresh_theme_setting_modifiers
+
     self
   ensure
     begin
@@ -427,6 +521,19 @@ class RemoteTheme < ActiveRecord::Base
 
   def is_git?
     remote_url.present?
+  end
+
+  def create_upload(path, relative_path)
+    new_path = "#{File.dirname(path)}/#{SecureRandom.hex}#{File.extname(path)}"
+
+    # OptimizedImage has strict file name restrictions, so rename temporarily
+    File.rename(path, new_path)
+
+    UploadCreator.new(
+      File.open(new_path),
+      File.basename(relative_path),
+      for_theme: true,
+    ).create_for(theme.user_id)
   end
 end
 

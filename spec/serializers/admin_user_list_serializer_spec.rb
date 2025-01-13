@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 RSpec.describe AdminUserListSerializer do
-  fab!(:user) { Fabricate(:user) }
-  fab!(:admin) { Fabricate(:admin) }
+  fab!(:user)
+  fab!(:admin)
   let(:guardian) { Guardian.new(admin) }
 
   let(:serializer) { AdminUserListSerializer.new(user, scope: guardian, root: false) }
@@ -87,6 +87,26 @@ RSpec.describe AdminUserListSerializer do
       json = serialize(user, admin)
       expect(json[:email]).to eq("user@email.com")
       expect(json[:secondary_emails]).to contain_exactly("first@email.com", "second@email.com")
+    end
+  end
+
+  describe "#can_be_deleted" do
+    it "is not included if the include_can_be_deleted option is not present" do
+      json = AdminUserListSerializer.new(user, scope: guardian, root: false).as_json
+
+      expect(json.key?(:can_be_deleted)).to eq(false)
+    end
+
+    it "is included if the include_can_be_deleted option is true" do
+      json =
+        AdminUserListSerializer.new(
+          user,
+          scope: guardian,
+          root: false,
+          include_can_be_deleted: true,
+        ).as_json
+
+      expect(json[:can_be_deleted]).to eq(true)
     end
   end
 end

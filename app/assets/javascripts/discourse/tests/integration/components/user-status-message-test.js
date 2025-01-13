@@ -2,7 +2,7 @@ import { render, triggerEvent } from "@ember/test-helpers";
 import { hbs } from "ember-cli-htmlbars";
 import { module, test } from "qunit";
 import { setupRenderingTest } from "discourse/tests/helpers/component-test";
-import { exists, fakeTime, query } from "discourse/tests/helpers/qunit-helpers";
+import { fakeTime, query } from "discourse/tests/helpers/qunit-helpers";
 
 async function mouseenter() {
   await triggerEvent(query(".user-status-message"), "mousemove");
@@ -24,14 +24,14 @@ module("Integration | Component | user-status-message", function (hooks) {
 
   test("it renders user status emoji", async function (assert) {
     await render(hbs`<UserStatusMessage @status={{this.status}} />`);
-    assert.ok(exists("img.emoji[alt='tooth']"), "the status emoji is shown");
+    assert.dom("img.emoji[alt='tooth']").exists("the status emoji is shown");
   });
 
   test("it renders status description if enabled", async function (assert) {
     await render(hbs`
       <UserStatusMessage
        @status={{this.status}}
-       @showDescription=true/>
+       @showDescription={{true}} />
     `);
 
     assert
@@ -48,7 +48,7 @@ module("Integration | Component | user-status-message", function (hooks) {
     this.status.ends_at = "2100-02-01T12:30:00.000Z";
 
     await render(
-      hbs`<UserStatusMessage @status={{this.status}} /><DInlineTooltip />`
+      hbs`<UserStatusMessage @status={{this.status}} /><DTooltips />`
     );
     await mouseenter();
 
@@ -66,7 +66,7 @@ module("Integration | Component | user-status-message", function (hooks) {
     this.status.ends_at = "2100-02-02T12:30:00.000Z";
 
     await render(
-      hbs`<UserStatusMessage @status={{this.status}} /><DInlineTooltip />`
+      hbs`<UserStatusMessage @status={{this.status}} /><DTooltips />`
     );
     await mouseenter();
 
@@ -84,7 +84,7 @@ module("Integration | Component | user-status-message", function (hooks) {
     this.status.ends_at = null;
 
     await render(
-      hbs`<UserStatusMessage @status={{this.status}} /><DInlineTooltip />`
+      hbs`<UserStatusMessage @status={{this.status}} /><DTooltips />`
     );
     await mouseenter();
 
@@ -97,7 +97,7 @@ module("Integration | Component | user-status-message", function (hooks) {
 
   test("it shows tooltip by default", async function (assert) {
     await render(
-      hbs`<UserStatusMessage @status={{this.status}} /><DInlineTooltip />`
+      hbs`<UserStatusMessage @status={{this.status}} /><DTooltips />`
     );
     await mouseenter();
 
@@ -121,7 +121,7 @@ module("Integration | Component | user-status-message", function (hooks) {
     this.set("status", { emoji: "tooth", description: "off to dentist" });
 
     await render(
-      hbs`<UserStatusMessage @status={{this.status}} @class="foo" />`
+      hbs`<UserStatusMessage @status={{this.status}} class="foo" />`
     );
 
     assert

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class RouteMatcher
-  PATH_PARAMETERS ||= "_DISCOURSE_REQUEST_PATH_PARAMETERS"
+  PATH_PARAMETERS = "_DISCOURSE_REQUEST_PATH_PARAMETERS"
 
   attr_reader :actions, :params, :methods, :aliases, :formats, :allowed_param_values
 
@@ -47,6 +47,9 @@ class RouteMatcher
 
     # message_bus is not a rails route, special handling
     return true if actions.include?("message_bus") && request.fullpath =~ %r{\A/message-bus/.*/poll}
+
+    # logster is not a rails route, special handling
+    return true if actions.include?(Logster::Web) && request.fullpath =~ %r{\A/logs/.*\.json\z}
 
     path_params = path_params_from_request(request)
     actions.include? "#{path_params[:controller]}##{path_params[:action]}"

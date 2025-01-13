@@ -2,22 +2,32 @@ import Component from "@glimmer/component";
 import { tracked } from "@glimmer/tracking";
 import { action } from "@ember/object";
 import { schedule } from "@ember/runloop";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
+import { htmlSafe } from "@ember/template";
 import { isEmpty } from "@ember/utils";
 import { ajax } from "discourse/lib/ajax";
+import { popupAjaxError } from "discourse/lib/ajax-error";
 import cookie, { removeCookie } from "discourse/lib/cookie";
+import escape from "discourse/lib/escape";
+import getURL from "discourse/lib/get-url";
+import { wantsNewWindow } from "discourse/lib/intercept-click";
 import { areCookiesEnabled } from "discourse/lib/utilities";
-import { wavingHandURL } from "discourse/lib/waving-hand-url";
-import { isWebauthnSupported } from "discourse/lib/webauthn";
+import {
+  getPasskeyCredential,
+  isWebauthnSupported,
+} from "discourse/lib/webauthn";
 import { findAll } from "discourse/models/login-method";
 import { SECOND_FACTOR_METHODS } from "discourse/models/user";
-import escape from "discourse-common/lib/escape";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
+import ForgotPassword from "./forgot-password";
 
 export default class Login extends Component {
+  @service capabilities;
   @service dialog;
   @service siteSettings;
   @service site;
+  @service login;
+  @service modal;
 
   @tracked loggingIn = false;
   @tracked loggedIn = false;
@@ -25,8 +35,8 @@ export default class Login extends Component {
   @tracked showSecondFactor = false;
   @tracked loginPassword = "";
   @tracked loginName = "";
-  @tracked flash = this.args.model?.flash;
-  @tracked flashType = this.args.model?.flashType;
+  @tracked flash = this.args.model.flash;
+  @tracked flashType = this.args.model.flashType;
   @tracked canLoginLocal = this.siteSettings.enable_local_logins;
   @tracked
   canLoginLocalWithEmail = this.siteSettings.enable_local_logins_via_email;
@@ -41,18 +51,9 @@ export default class Login extends Component {
   @tracked securityKeyAllowedCredentialIds;
   @tracked secondFactorToken;
 
-  constructor() {
-    super(...arguments);
-    if (this.args.model?.isExternalLogin) {
-      this.externalLogin(this.args.model.externalLoginMethod, {
-        signup: this.args.model.signup,
-      });
-    }
-  }
-
   get awaitingApproval() {
     return (
-      this.args.model?.awaitingApproval &&
+      this.args.model.awaitingApproval &&
       !this.canLoginLocal &&
       !this.canLoginLocalWithEmail
     );
@@ -60,10 +61,6 @@ export default class Login extends Component {
 
   get loginDisabled() {
     return this.loggingIn || this.loggedIn;
-  }
-
-  get wavingHandURL() {
-    return wavingHandURL();
   }
 
   get modalBodyClasses() {
@@ -90,7 +87,7 @@ export default class Login extends Component {
   get canUsePasskeys() {
     return (
       this.siteSettings.enable_local_logins &&
-      this.siteSettings.experimental_passkeys &&
+      this.siteSettings.enable_passkeys &&
       isWebauthnSupported()
     );
   }
@@ -99,14 +96,57 @@ export default class Login extends Component {
     return findAll().length > 0 || this.canUsePasskeys;
   }
 
+  get hasNoLoginOptions() {
+    return !this.hasAtLeastOneLoginButton && !this.canLoginLocal;
+  }
+
   get loginButtonLabel() {
     return this.loggingIn ? "login.logging_in" : "login.title";
   }
 
   get showSignupLink() {
-    return (
-      this.args.model.canSignUp && !this.loggingIn && !this.showSecondFactor
-    );
+    return this.args.model.canSignUp && !this.showSecondFactor;
+  }
+
+  get adminLoginPath() {
+    return getURL("/u/admin-login");
+  }
+
+  @action
+  async passkeyLogin(mediation = "optional") {
+    try {
+      const publicKeyCredential = await getPasskeyCredential(
+        (e) => this.dialog.alert(e),
+        mediation,
+        this.capabilities.isFirefox
+      );
+
+      if (publicKeyCredential) {
+        const authResult = await ajax("/session/passkey/auth.json", {
+          type: "POST",
+          data: { publicKeyCredential },
+        });
+
+        if (authResult && !authResult.error) {
+          const destinationUrl = cookie("destination_url");
+          const ssoDestinationUrl = cookie("sso_destination_url");
+
+          if (ssoDestinationUrl) {
+            removeCookie("sso_destination_url");
+            window.location.assign(ssoDestinationUrl);
+          } else if (destinationUrl) {
+            removeCookie("destination_url");
+            window.location.assign(destinationUrl);
+          } else {
+            window.location.reload();
+          }
+        } else {
+          this.dialog.alert(authResult.error);
+        }
+      }
+    } catch (e) {
+      popupAjaxError(e);
+    }
   }
 
   @action
@@ -145,13 +185,13 @@ export default class Login extends Component {
   }
 
   @action
-  async login() {
+  async triggerLogin() {
     if (this.loginDisabled) {
       return;
     }
 
     if (isEmpty(this.loginName) || isEmpty(this.loginPassword)) {
-      this.flash = I18n.t("login.blank_username_or_password");
+      this.flash = i18n("login.blank_username_or_password");
       this.flashType = "error";
       return;
     }
@@ -210,6 +250,13 @@ export default class Login extends Component {
         } else if (result.reason === "suspended") {
           this.args.closeModal();
           this.dialog.alert(result.error);
+        } else if (result.reason === "expired") {
+          this.flash = htmlSafe(
+            i18n("login.password_expired", {
+              reset_url: getURL("/password-reset"),
+            })
+          );
+          this.flashType = "error";
         } else {
           this.flash = result.error;
           this.flashType = "error";
@@ -263,20 +310,20 @@ export default class Login extends Component {
     } catch (e) {
       // Failed to login
       if (e.jqXHR && e.jqXHR.status === 429) {
-        this.flash = I18n.t("login.rate_limit");
+        this.flash = i18n("login.rate_limit");
         this.flashType = "error";
       } else if (
         e.jqXHR &&
         e.jqXHR.status === 503 &&
         e.jqXHR.responseJSON.error_type === "read_only"
       ) {
-        this.flash = I18n.t("read_only_mode.login_disabled");
+        this.flash = i18n("read_only_mode.login_disabled");
         this.flashType = "error";
       } else if (!areCookiesEnabled()) {
-        this.flash = I18n.t("login.cookies_error");
+        this.flash = i18n("login.cookies_error");
         this.flashType = "error";
       } else {
-        this.flash = I18n.t("login.error");
+        this.flash = i18n("login.error");
         this.flashType = "error";
       }
       this.loggingIn = false;
@@ -284,18 +331,14 @@ export default class Login extends Component {
   }
 
   @action
-  async externalLogin(loginMethod, { signup = false } = {}) {
+  externalLoginAction(loginMethod) {
     if (this.loginDisabled) {
       return;
     }
-
-    try {
-      this.loggingIn = true;
-      await loginMethod.doLogin({ signup });
-      this.args.closeModal();
-    } catch {
-      this.loggingIn = false;
-    }
+    this.login.externalLogin(loginMethod, {
+      signup: false,
+      setLoggingIn: (value) => (this.loggingIn = value),
+    });
   }
 
   @action
@@ -309,5 +352,22 @@ export default class Login extends Component {
       createAccountProps.accountEmail = null;
     }
     this.args.model.showCreateAccount(createAccountProps);
+  }
+
+  @action
+  interceptResetLink(event) {
+    if (
+      !wantsNewWindow(event) &&
+      event.target.href &&
+      new URL(event.target.href).pathname === getURL("/password-reset")
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.modal.show(ForgotPassword, {
+        model: {
+          emailOrUsername: this.loginName,
+        },
+      });
+    }
   }
 }

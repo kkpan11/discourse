@@ -15,7 +15,7 @@ RSpec.describe UserOption do
   end
 
   describe "defaults" do
-    fab!(:user) { Fabricate(:user) }
+    fab!(:user)
 
     it "should be redirected to top when there is a reason to" do
       user.user_option.expects(:redirected_to_top).returns(reason: "42")
@@ -28,7 +28,8 @@ RSpec.describe UserOption do
     end
 
     it "should not hide the profile and presence by default" do
-      expect(user.user_option.hide_profile_and_presence).to eq(false)
+      expect(user.user_option.hide_profile).to eq(false)
+      expect(user.user_option.hide_presence).to eq(false)
     end
 
     it "should correctly set digest frequency" do
@@ -73,6 +74,7 @@ RSpec.describe UserOption do
   describe "site settings" do
     it "should apply defaults from site settings" do
       SiteSetting.default_other_enable_quoting = false
+      SiteSetting.default_other_enable_smart_lists = false
       SiteSetting.default_other_enable_defer = true
       SiteSetting.default_other_external_links_in_new_tab = true
       SiteSetting.default_other_dynamic_favicon = true
@@ -81,6 +83,7 @@ RSpec.describe UserOption do
       user = Fabricate(:user)
 
       expect(user.user_option.enable_quoting).to eq(false)
+      expect(user.user_option.enable_smart_lists).to eq(false)
       expect(user.user_option.enable_defer).to eq(true)
       expect(user.user_option.external_links_in_new_tab).to eq(true)
       expect(user.user_option.dynamic_favicon).to eq(true)
@@ -111,7 +114,7 @@ RSpec.describe UserOption do
   end
 
   describe ".redirected_to_top" do
-    fab!(:user) { Fabricate(:user) }
+    fab!(:user)
 
     it "should have no reason when `SiteSetting.redirect_users_to_top_page` is disabled" do
       SiteSetting.redirect_users_to_top_page = false
@@ -192,7 +195,7 @@ RSpec.describe UserOption do
   end
 
   describe ".user_tzinfo" do
-    fab!(:user) { Fabricate(:user) }
+    fab!(:user)
 
     context "with user with valid timezone given" do
       before { user.user_option.update(timezone: "Europe/Paris") }

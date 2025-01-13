@@ -16,7 +16,7 @@ module("Integration | Component | sidebar | section-link", function (hooks) {
   setupRenderingTest(hooks);
 
   test("default class attribute for link", async function (assert) {
-    const template = hbs`<Sidebar::SectionLink @linkName="Test   Meta" @route="discovery.latest" />`;
+    const template = hbs`<Sidebar::SectionLink @linkName="Test Meta" @route="discovery.latest" />`;
 
     await render(template);
 
@@ -29,7 +29,7 @@ module("Integration | Component | sidebar | section-link", function (hooks) {
   });
 
   test("custom class attribute for link", async function (assert) {
-    const template = hbs`<Sidebar::SectionLink @linkName="Test   Meta" @route="discovery.latest" @class="123 abc" />`;
+    const template = hbs`<Sidebar::SectionLink @linkName="Test Meta" @route="discovery.latest" @linkClass="123 abc" />`;
 
     await render(template);
 
@@ -45,7 +45,7 @@ module("Integration | Component | sidebar | section-link", function (hooks) {
     const template = hbs`<Sidebar::SectionLink @linkName="test" @href="https://discourse.org" />`;
     await render(template);
 
-    assert.strictEqual(query("a").target, "_self");
+    assert.dom("a").hasAttribute("target", "_self");
   });
 
   test("target attribute for link when user set external links in new tab", async function (assert) {
@@ -53,6 +53,6 @@ module("Integration | Component | sidebar | section-link", function (hooks) {
     const template = hbs`<Sidebar::SectionLink @linkName="test" @href="https://discourse.org" />`;
     await render(template);
 
-    assert.strictEqual(query("a").target, "_blank");
+    assert.dom("a").hasAttribute("target", "_blank");
   });
 });

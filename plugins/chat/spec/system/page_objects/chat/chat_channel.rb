@@ -35,7 +35,9 @@ module PageObjects
       end
 
       def click_composer
-        find(".chat-channel .chat-composer__input").click # ensures autocomplete is closed and not masking anything
+        if has_no_css?(".dialog-overlay", wait: 0) # we can't click composer if a dialog is open, in case of error for exampel
+          find(".chat-channel .chat-composer__input").click # ensures autocomplete is closed and not masking anything
+        end
       end
 
       def click_send_message
@@ -81,11 +83,23 @@ module PageObjects
         # Scroll to top of message so that the actions are not hidden
         page.scroll_to(message, align: :top)
         message.hover
+        message
+      end
+
+      def react_to_message(message, emoji_name = nil)
+        message = hover_message(message)
+
+        if emoji_name
+          message.find(".chat-message-actions [data-emoji-name=\"#{emoji_name}\"]").click
+        else
+          message.find(".react-btn").click
+        end
       end
 
       def bookmark_message(message)
         if page.has_css?("html.mobile-view", wait: 0)
           click_message_action_mobile(message, "bookmark")
+          expect(page).to have_css(".d-modal:not(.is-animating)")
         else
           hover_message(message)
           find(".bookmark-btn").click
@@ -98,14 +112,15 @@ module PageObjects
 
       def edit_message(message, text = nil)
         messages.edit(message)
-        send_message(message.message + text) if text
+        send_message(message.message + " " + text) if text
       end
 
       def send_message(text = nil)
-        text ||= Faker::Lorem.characters(number: SiteSetting.chat_minimum_message_length)
+        text ||= fake_chat_message
         text = text.chomp if text.present? # having \n on the end of the string counts as an Enter keypress
         composer.fill_in(with: text)
         click_send_message
+        expect(page).to have_no_css(".chat-message.-not-processed")
         text
       end
 
@@ -186,7 +201,7 @@ module PageObjects
       end
 
       def thread_list_button_selector
-        ".chat-threads-list-button"
+        ".c-navbar__threads-list-button"
       end
 
       private

@@ -15,6 +15,12 @@ module PageObjects
         self
       end
 
+      def click_bookmarks_tab
+        click_link("user-menu-button-bookmarks")
+        has_css?("#quick-access-bookmarks")
+        self
+      end
+
       def click_profile_tab
         click_link("user-menu-button-profile")
         has_css?("#quick-access-profile")
@@ -24,6 +30,11 @@ module PageObjects
       def click_logout_button
         find("#quick-access-profile .logout .btn").click
         has_css?(".d-header .login-button")
+        self
+      end
+
+      def click_bookmark(bookmark)
+        find("#quick-access-bookmarks .bookmark a[href='#{bookmark.bookmarkable.url}']").click
         self
       end
 
@@ -42,6 +53,14 @@ module PageObjects
 
       def has_right_replies_button_count?(count)
         expect(find("#user-menu-button-replies").text).to eq(count.to_s)
+      end
+
+      def has_notification_count_of?(count)
+        page.has_css?(".user-menu li.notification", count: count)
+      end
+
+      def has_bookmark_count_of?(count)
+        page.has_css?(".user-menu #quick-access-bookmarks li.bookmark", count: count)
       end
     end
   end

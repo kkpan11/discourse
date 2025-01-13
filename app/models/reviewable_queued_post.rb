@@ -7,7 +7,7 @@ class ReviewableQueuedPost < Reviewable
   end
 
   after_save do
-    if saved_change_to_payload? && self.status == Reviewable.statuses[:pending] &&
+    if saved_change_to_payload? && self.status.to_sym == :pending &&
          self.payload&.[]("raw").present?
       upload_ids = Upload.extract_upload_ids(self.payload["raw"])
       UploadReference.ensure_exist!(upload_ids: upload_ids, target: self)
@@ -56,14 +56,14 @@ class ReviewableQueuedPost < Reviewable
           actions.add_bundle("#{id}-reject", label: "reviewables.actions.reject_post.title")
 
         actions.add(:reject_post, bundle: reject_bundle) do |a|
-          a.icon = "times"
+          a.icon = "xmark"
           a.label = "reviewables.actions.discard_post.title"
           a.button_class = "reject-post"
         end
         delete_user_actions(actions, reject_bundle)
       else
         actions.add(:reject_post) do |a|
-          a.icon = "times"
+          a.icon = "xmark"
           a.label = "reviewables.actions.reject_post.title"
         end
       end
@@ -73,7 +73,9 @@ class ReviewableQueuedPost < Reviewable
       end
     end
 
-    actions.add(:delete) if guardian.can_delete?(self)
+    actions.add(:delete) do |a|
+      a.label = "reviewables.actions.delete_single.title"
+    end if guardian.can_delete?(self)
   end
 
   def build_editable_fields(fields, guardian, args)
@@ -108,6 +110,7 @@ class ReviewableQueuedPost < Reviewable
         skip_jobs: true,
         skip_events: true,
         skip_guardian: true,
+        reviewed_queued_post: true,
       )
     opts.merge!(guardian: Guardian.new(performed_by)) if performed_by.staff?
 
@@ -163,16 +166,22 @@ class ReviewableQueuedPost < Reviewable
 
   def perform_revise_and_reject_post(performed_by, args)
     pm_translation_args = {
-      topic_title: self.topic.title,
-      topic_url: self.topic.url,
+      topic_title: self.topic&.title || self.payload["title"],
+      topic_url: self.topic&.url,
       reason: args[:revise_custom_reason].presence || args[:revise_reason],
       feedback: args[:revise_feedback],
       original_post: self.payload["raw"],
       site_name: SiteSetting.title,
     }
-    SystemMessage.create_from_system_user(
+    SystemMessage.create(
       self.target_created_by,
-      :reviewable_queued_post_revise_and_reject,
+      (
+        if self.topic.blank?
+          :reviewable_queued_post_revise_and_reject_new_topic
+        else
+          :reviewable_queued_post_revise_and_reject
+        end
+      ),
       pm_translation_args,
     )
     StaffActionLogger.new(performed_by).log_post_rejected(self, DateTime.now) if performed_by.staff?
@@ -234,7 +243,6 @@ end
 #  status                  :integer          default("pending"), not null
 #  created_by_id           :integer          not null
 #  reviewable_by_moderator :boolean          default(FALSE), not null
-#  reviewable_by_group_id  :integer
 #  category_id             :integer
 #  topic_id                :integer
 #  score                   :float            default(0.0), not null
@@ -249,6 +257,7 @@ end
 #  updated_at              :datetime         not null
 #  force_review            :boolean          default(FALSE), not null
 #  reject_reason           :text
+#  potentially_illegal     :boolean          default(FALSE)
 #
 # Indexes
 #

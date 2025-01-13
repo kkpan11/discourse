@@ -1,11 +1,9 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
 RSpec.describe Chat::Api::ChannelsArchivesController do
-  fab!(:user) { Fabricate(:user) }
-  fab!(:admin) { Fabricate(:admin) }
-  fab!(:category) { Fabricate(:category) }
+  fab!(:user)
+  fab!(:admin)
+  fab!(:category)
   fab!(:channel) { Fabricate(:category_channel, chatable: category) }
 
   let(:new_topic_params) do
@@ -24,7 +22,6 @@ RSpec.describe Chat::Api::ChannelsArchivesController do
   before do
     SiteSetting.chat_enabled = true
     SiteSetting.chat_allowed_groups = Group::AUTO_GROUPS[:everyone]
-    SiteSetting.chat_duplicate_message_sensitivity = 0
   end
 
   describe "#create" do
@@ -153,7 +150,7 @@ RSpec.describe Chat::Api::ChannelsArchivesController do
         expect { post "/chat/api/channels/#{channel.id}/archives" }.to change(
           Jobs::Chat::ChannelArchive.jobs,
           :size,
-        ).by (1)
+        ).by(1)
         expect(response.status).to eq(200)
       end
     end

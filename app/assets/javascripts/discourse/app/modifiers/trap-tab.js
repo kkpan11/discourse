@@ -1,9 +1,9 @@
 import { registerDestructor } from "@ember/destroyable";
 import Modifier from "ember-modifier";
-import { bind } from "discourse-common/utils/decorators";
+import { bind } from "discourse/lib/decorators";
 
 const FOCUSABLE_ELEMENTS =
-  'details:not(.is-disabled) summary, [autofocus], a, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+  "details:not(.is-disabled) summary, [autofocus], a, input, select, textarea, summary";
 
 export default class TrapTabModifier extends Modifier {
   element = null;
@@ -13,17 +13,21 @@ export default class TrapTabModifier extends Modifier {
     registerDestructor(this, (instance) => instance.cleanup());
   }
 
-  modify(element, [options]) {
-    this.preventScroll = options?.preventScroll ?? true;
-    this.orignalElement = element;
-    this.element = element.querySelector(".modal-inner-container") || element;
-    this.orignalElement.addEventListener("keydown", this.trapTab);
+  modify(element, _, { preventScroll, autofocus }) {
+    autofocus ??= true;
+    this.preventScroll = preventScroll ?? true;
+    this.originalElement = element;
+    this.element = element.querySelector(".d-modal__container") || element;
+    this.originalElement.addEventListener("keydown", this.trapTab);
 
     // on first trap we don't allow to focus modal-close
     // and apply manual focus only if we don't have any autofocus element
     const autofocusedElement = this.element.querySelector("[autofocus]");
 
-    if (!autofocusedElement || document.activeElement !== autofocusedElement) {
+    if (
+      autofocus &&
+      (!autofocusedElement || document.activeElement !== autofocusedElement)
+    ) {
       // if there's not autofocus, or the activeElement, is not the autofocusable element
       // attempt to focus the first of the focusable elements or just the modal-body
       // to make it possible to scroll with arrow down/up
@@ -32,7 +36,7 @@ export default class TrapTabModifier extends Modifier {
         this.element.querySelector(
           FOCUSABLE_ELEMENTS + ", button:not(.modal-close)"
         ) ||
-        this.element.querySelector(".modal-body")
+        this.element.querySelector(".d-modal__body")
       )?.focus({
         preventScroll: this.preventScroll,
       });
@@ -46,10 +50,17 @@ export default class TrapTabModifier extends Modifier {
     }
 
     const focusableElements = FOCUSABLE_ELEMENTS + ", button:enabled";
-    const firstFocusableElement = this.element.querySelector(focusableElements);
-    const focusableContent = this.element.querySelectorAll(focusableElements);
 
-    const lastFocusableElement = focusableContent[focusableContent.length - 1];
+    const filteredFocusableElements = Array.from(
+      this.element.querySelectorAll(focusableElements)
+    ).filter((element) => {
+      const tabindex = element.getAttribute("tabindex");
+      return tabindex !== "-1";
+    });
+
+    const firstFocusableElement = filteredFocusableElements[0];
+    const lastFocusableElement =
+      filteredFocusableElements[filteredFocusableElements.length - 1];
 
     if (event.shiftKey) {
       if (document.activeElement === firstFocusableElement) {
@@ -59,7 +70,6 @@ export default class TrapTabModifier extends Modifier {
     } else {
       if (document.activeElement === lastFocusableElement) {
         event.preventDefault();
-
         (
           this.element.querySelector(".modal-close") || firstFocusableElement
         )?.focus({ preventScroll: this.preventScroll });
@@ -68,6 +78,6 @@ export default class TrapTabModifier extends Modifier {
   }
 
   cleanup() {
-    this.orignalElement.removeEventListener("keydown", this.trapTab);
+    this.originalElement.removeEventListener("keydown", this.trapTab);
   }
 }

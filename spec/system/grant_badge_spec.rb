@@ -5,7 +5,7 @@ describe "Granting Badges", type: :system do
 
   context "when in topic" do
     fab!(:post) { Fabricate(:post, raw: "This is some post to bookmark") }
-    fab!(:admin) { Fabricate(:admin) }
+    fab!(:admin)
     fab!(:badge_to_grant) { Fabricate(:manually_grantable_badge) }
     fab!(:other_badge) { Fabricate(:manually_grantable_badge) }
     let(:user) { post.user }
@@ -31,6 +31,45 @@ describe "Granting Badges", type: :system do
       granted_badge = UserBadge.last
       expect(granted_badge.badge_id).to eq badge_to_grant.id
       expect(granted_badge.post_id).to eq post.id
+    end
+  end
+
+  context "when granting a badge that shows in the post header" do
+    fab!(:user)
+    fab!(:post) { Fabricate(:post, user: user) }
+
+    let(:topic_page) { PageObjects::Pages::Topic.new }
+
+    fab!(:badge) do
+      Fabricate(
+        :manually_grantable_badge,
+        name: "SomeBadge",
+        listable: true,
+        show_posts: true,
+        show_in_post_header: true,
+      )
+    end
+    fab!(:user_badge) do
+      UserBadge.create!(
+        badge_id: badge.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    it "shows badge in post header" do
+      topic_page.visit_topic(post.topic)
+      expect(topic_page.post_by_number(post).find(".user-badge-buttons")).to have_css(
+        ".user-badge-button-somebadge",
+      )
+    end
+
+    it "doesn't show badge in post header when `show_badges_in_post_header` site setting is disabled" do
+      SiteSetting.show_badges_in_post_header = false
+      topic_page.visit_topic(post.topic)
+      expect(topic_page.post_by_number(post)).to_not have_css(".user-badge-buttons")
     end
   end
 end

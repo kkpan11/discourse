@@ -4,6 +4,9 @@ module Chat
   class ChannelFetcher
     MAX_PUBLIC_CHANNEL_RESULTS = 50
 
+    # NOTE: this should always be > than `DIRECT_MESSAGE_CHANNELS_LIMIT` in `chat-channel-manager.js`
+    MAX_DM_CHANNEL_RESULTS = 75
+
     def self.structured(guardian, include_threads: false)
       memberships = Chat::ChannelMembershipManager.all_for_user(guardian.user)
       public_channels = secured_public_channels(guardian, status: :open, following: true)
@@ -80,7 +83,6 @@ module Chat
         .where(chatable_type: Chat::Channel.public_channel_chatable_types)
         .where("chat_channels.id IN (#{allowed_channel_ids})")
         .where("chat_channels.slug IN (:slugs)", slugs: slugs)
-        .limit(1)
     end
 
     def self.secured_public_channel_search(guardian, options = {})
@@ -88,7 +90,17 @@ module Chat
 
       allowed_channel_ids = generate_allowed_channel_ids_sql(guardian, exclude_dm_channels: true)
 
-      channels = Chat::Channel.includes(:last_message, chatable: [:topic_only_relative_url])
+      channels =
+        Chat::Channel.includes(
+          :last_message,
+          chatable: %i[
+            topic_only_relative_url
+            uploaded_background
+            uploaded_background_dark
+            uploaded_logo
+            uploaded_logo_dark
+          ],
+        )
       channels = channels.includes(:chat_channel_archive) if options[:include_archives]
 
       channels =
@@ -161,12 +173,11 @@ module Chat
     end
 
     def self.preload_custom_fields_for(channels)
-      preload_fields = Category.instance_variable_get(:@custom_field_types).keys
       Category.preload_custom_fields(
         channels
           .select { |c| c.chatable_type == "Category" || c.chatable_type == "category" }
           .map(&:chatable),
-        preload_fields,
+        Site.preloaded_category_custom_fields,
       )
     end
 
@@ -175,18 +186,6 @@ module Chat
     end
 
     def self.secured_direct_message_channels_search(user_id, guardian, options = {})
-      query =
-        Chat::Channel.strict_loading.includes(
-          last_message: [:uploads],
-          chatable: [{ direct_message_users: [user: :user_option] }, :users],
-        )
-      query = query.includes(chatable: [{ users: :user_status }]) if SiteSetting.enable_user_status
-      query = query.joins(:user_chat_channel_memberships)
-      query =
-        query.joins(
-          "LEFT JOIN chat_messages last_message ON last_message.id = chat_channels.last_message_id",
-        )
-
       scoped_channels =
         Chat::Channel
           .joins(
@@ -197,52 +196,84 @@ module Chat
           )
           .where("direct_message_users.user_id = :user_id", user_id: user_id)
 
-      if options[:user_ids]
-        scoped_channels =
-          scoped_channels.where(
-            "EXISTS (
-              SELECT 1
-              FROM direct_message_channels AS dmc
-              INNER JOIN direct_message_users AS dmu ON dmu.direct_message_channel_id = dmc.id
-              WHERE dmc.id = chat_channels.chatable_id AND dmu.user_id IN (:user_ids)
-            )",
-            user_ids: options[:user_ids],
+      query =
+        Chat::Channel
+          .strict_loading
+          .where(id: scoped_channels)
+          .includes(
+            :icon_upload,
+            last_message: [:uploads],
+            chatable: [{ direct_message_users: [user: %i[user_option group_users]] }, :users],
+          )
+          .joins(
+            "LEFT JOIN chat_messages last_message ON last_message.id = chat_channels.last_message_id",
+          )
+
+      query = query.includes(chatable: [{ users: :user_status }]) if SiteSetting.enable_user_status
+
+      if options[:filter]
+        if options[:match_filter_on_starts_with]
+          filter_sql = "#{options[:filter].downcase}%"
+        else
+          filter_sql = "%#{options[:filter].downcase}%"
+        end
+
+        query =
+          query.joins(user_chat_channel_memberships: :user).where(
+            "chat_channels.name ILIKE :filter OR chat_channels.slug ILIKE :filter OR users.username ILIKE :filter",
+            filter: filter_sql,
           )
       end
 
       if options.key?(:following)
+        following_params = { user_id: user_id }
+        following_params[:following] = options[:following] if options[:following].present?
         query =
-          query.where(
-            user_chat_channel_memberships: {
-              user_id: user_id,
-              following: options[:following],
-            },
+          query.joins(:user_chat_channel_memberships).where(
+            user_chat_channel_memberships: following_params,
           )
-      else
-        query = query.where(user_chat_channel_memberships: { user_id: user_id })
       end
 
       query =
         query
-          .where(chatable_type: Chat::Channel.direct_channel_chatable_types)
-          .where(chat_channels: { id: scoped_channels })
+          .limit(MAX_DM_CHANNEL_RESULTS)
           .order("last_message.created_at DESC NULLS LAST")
+          .group("chat_channels.id", "last_message.id")
 
       channels = query.to_a
+
       preload_fields =
         User.allowed_user_custom_fields(guardian) +
           UserField.all.pluck(:id).map { |fid| "#{User::USER_FIELD_PREFIX}#{fid}" }
-      User.preload_custom_fields(channels.map { |c| c.chatable.users }.flatten, preload_fields)
+
+      User.preload_custom_fields(channels.flat_map { _1.chatable.users }, preload_fields)
+
       channels
     end
 
     def self.tracking_state(channel_ids, guardian, include_threads: false)
       Chat::TrackingState.call(
-        channel_ids: channel_ids,
-        guardian: guardian,
-        include_missing_memberships: true,
-        include_threads: include_threads,
+        guardian:,
+        params: {
+          include_missing_memberships: true,
+          channel_ids:,
+          include_threads:,
+        },
       ).report
+    end
+
+    def self.unreads_total(guardian)
+      result = 0
+
+      public_channels = secured_public_channels(guardian, status: :open, following: true)
+      publics = tracking_state(public_channels.map(&:id), guardian, include_threads: true)
+      publics.channel_tracking.each_value { |channel_info| result += channel_info[:mention_count] }
+
+      direct_message_channels = secured_direct_message_channels(guardian.user.id, guardian)
+      directs = tracking_state(direct_message_channels.map(&:id), guardian)
+      directs.channel_tracking.each_value { |channel_info| result += channel_info[:unread_count] }
+
+      result
     end
 
     def self.find_with_access_check(channel_id_or_slug, guardian)

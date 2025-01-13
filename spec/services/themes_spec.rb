@@ -1,9 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe ThemesInstallTask do
-  fab!(:admin) { Fabricate(:admin) }
-
-  before { Discourse::Application.load_tasks }
+  fab!(:admin)
 
   describe ".new" do
     THEME_NAME = "awesome theme"

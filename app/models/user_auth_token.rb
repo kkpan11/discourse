@@ -78,7 +78,8 @@ class UserAuthToken < ActiveRecord::Base
     client_ip: nil,
     path: nil,
     staff: nil,
-    impersonate: false
+    impersonate: false,
+    authenticated_with_oauth: false
   )
     token = SecureRandom.hex(16)
     hashed_token = hash_token(token)
@@ -90,6 +91,7 @@ class UserAuthToken < ActiveRecord::Base
         auth_token: hashed_token,
         prev_auth_token: hashed_token,
         rotated_at: Time.zone.now,
+        authenticated_with_oauth: !!authenticated_with_oauth,
       )
     user_auth_token.unhashed_auth_token = token
 
@@ -122,12 +124,18 @@ class UserAuthToken < ActiveRecord::Base
     expire_before = SiteSetting.maximum_session_age.hours.ago
 
     user_token =
-      find_by(
+      where(
         "(auth_token = :token OR
                           prev_auth_token = :token) AND rotated_at > :expire_before",
         token: token,
         expire_before: expire_before,
       )
+
+    if SiteSetting.verbose_auth_token_logging && path = opts.dig(:path)
+      user_token = user_token.annotate("path:#{path}")
+    end
+
+    user_token = user_token.first
 
     if !user_token
       log_verbose(
@@ -272,17 +280,18 @@ end
 #
 # Table name: user_auth_tokens
 #
-#  id              :integer          not null, primary key
-#  user_id         :integer          not null
-#  auth_token      :string           not null
-#  prev_auth_token :string           not null
-#  user_agent      :string
-#  auth_token_seen :boolean          default(FALSE), not null
-#  client_ip       :inet
-#  rotated_at      :datetime         not null
-#  created_at      :datetime         not null
-#  updated_at      :datetime         not null
-#  seen_at         :datetime
+#  id                       :integer          not null, primary key
+#  user_id                  :integer          not null
+#  auth_token               :string           not null
+#  prev_auth_token          :string           not null
+#  user_agent               :string
+#  auth_token_seen          :boolean          default(FALSE), not null
+#  client_ip                :inet
+#  rotated_at               :datetime         not null
+#  created_at               :datetime         not null
+#  updated_at               :datetime         not null
+#  seen_at                  :datetime
+#  authenticated_with_oauth :boolean          default(FALSE)
 #
 # Indexes
 #

@@ -7,68 +7,102 @@ module Chat
   # are passed in.
   #
   # @example
-  #  Service::Chat::CreateDirectMessageChannel.call(
+  #  ::Chat::CreateDirectMessageChannel.call(
   #    guardian: guardian,
-  #    target_usernames: ["bob", "alice"]
+  #    params: {
+  #      target_usernames: ["bob", "alice"],
+  #   },
   #  )
   #
   class CreateDirectMessageChannel
     include Service::Base
 
-    # @!method call(guardian:, **params_to_create)
+    # @!method self.call(guardian:, params:)
     #   @param [Guardian] guardian
-    #   @param [Hash] params_to_create
-    #   @option params_to_create [Array<String>] target_usernames
+    #   @param [Hash] params
+    #   @option params [Array<String>] :target_usernames
+    #   @option params [Array<String>] :target_groups
+    #   @option params [Boolean] :upsert
     #   @return [Service::Base::Context]
 
-    policy :can_create_direct_message
-    contract
+    params do
+      attribute :name, :string
+      attribute :target_usernames, :array
+      attribute :target_groups, :array
+      attribute :upsert, :boolean, default: false
+      attribute :icon_upload_id, :integer
+
+      validate :target_presence
+
+      def target_presence
+        target_usernames.present? || target_groups.present?
+      end
+    end
+
     model :target_users
+    policy :can_create_direct_message
     policy :satisfies_dms_max_users_limit,
-           class_name: Chat::DirectMessageChannel::MaxUsersExcessPolicy
+           class_name: Chat::DirectMessageChannel::Policy::MaxUsersExcess
     model :user_comm_screener
     policy :actor_allows_dms
     policy :targets_allow_dms_from_user,
-           class_name: Chat::DirectMessageChannel::CanCommunicateAllPartiesPolicy
+           class_name: Chat::DirectMessageChannel::Policy::CanCommunicateAllParties
     model :direct_message, :fetch_or_create_direct_message
     model :channel, :fetch_or_create_channel
+    step :set_optional_params
     step :update_memberships
-
-    # @!visibility private
-    class Contract
-      attribute :target_usernames, :array
-      validates :target_usernames, presence: true
-    end
+    step :recompute_users_count
 
     private
 
-    def can_create_direct_message(guardian:, **)
-      guardian.can_create_direct_message?
+    def can_create_direct_message(guardian:, target_users:)
+      guardian.can_create_direct_message? &&
+        DiscoursePluginRegistry.apply_modifier(
+          :chat_can_create_direct_message_channel,
+          guardian.user,
+          target_users,
+        )
     end
 
-    def fetch_target_users(guardian:, contract:, **)
-      User.where(username: [guardian.user.username, *contract.target_usernames]).to_a
+    def fetch_target_users(guardian:, params:)
+      ::Chat::UsersFromUsernamesAndGroupsQuery.call(
+        usernames: [*params.target_usernames, guardian.user.username],
+        groups: params.target_groups,
+      )
     end
 
-    def fetch_user_comm_screener(target_users:, guardian:, **)
+    def fetch_user_comm_screener(target_users:, guardian:)
       UserCommScreener.new(acting_user: guardian.user, target_user_ids: target_users.map(&:id))
     end
 
-    def actor_allows_dms(user_comm_screener:, **)
+    def actor_allows_dms(user_comm_screener:)
       !user_comm_screener.actor_disallowing_all_pms?
     end
 
-    def fetch_or_create_direct_message(target_users:, **)
-      Chat::DirectMessage.for_user_ids(target_users.map(&:id)) ||
-        Chat::DirectMessage.create(user_ids: target_users.map(&:id))
+    def fetch_or_create_direct_message(target_users:, params:)
+      ids = target_users.map(&:id)
+      is_group = ids.size > 2 || params.name.present?
+
+      if params.upsert || !is_group
+        ::Chat::DirectMessage.for_user_ids(ids, group: is_group) ||
+          ::Chat::DirectMessage.create(user_ids: ids, group: is_group)
+      else
+        ::Chat::DirectMessage.create(user_ids: ids, group: is_group)
+      end
     end
 
-    def fetch_or_create_channel(direct_message:, **)
-      Chat::DirectMessageChannel.find_or_create_by(chatable: direct_message)
+    def fetch_or_create_channel(direct_message:)
+      ::Chat::DirectMessageChannel.find_or_create_by(chatable: direct_message)
     end
 
-    def update_memberships(channel:, target_users:, **)
-      always_level = Chat::UserChatChannelMembership::NOTIFICATION_LEVELS[:always]
+    def set_optional_params(channel:, params:)
+      optional_params =
+        params.slice(:name, :icon_upload_id).reject { |_, value| value.nil? || value == "" }
+      channel.update!(optional_params) if !optional_params.empty?
+    end
+
+    def update_memberships(channel:, target_users:)
+      always_level = ::Chat::UserChatChannelMembership::NOTIFICATION_LEVELS[:always]
 
       memberships =
         target_users.map do |user|
@@ -77,16 +111,22 @@ module Chat
             chat_channel_id: channel.id,
             muted: false,
             following: false,
-            desktop_notification_level: always_level,
-            mobile_notification_level: always_level,
+            notification_level: always_level,
             created_at: Time.zone.now,
             updated_at: Time.zone.now,
           }
         end
 
-      Chat::UserChatChannelMembership.upsert_all(
+      ::Chat::UserChatChannelMembership.upsert_all(
         memberships,
         unique_by: %i[user_id chat_channel_id],
+      )
+    end
+
+    def recompute_users_count(channel:)
+      channel.update!(
+        user_count: ::Chat::ChannelMembershipsQuery.count(channel),
+        user_count_stale: false,
       )
     end
   end

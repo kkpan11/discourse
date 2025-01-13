@@ -1,3 +1,4 @@
+import { getOwner } from "@ember/owner";
 import { click, fillIn, settled, visit } from "@ember/test-helpers";
 import { skip, test } from "qunit";
 import { Promise } from "rsvp";
@@ -8,11 +9,10 @@ import {
   acceptance,
   chromeTest,
   createFile,
-  loggedInUser,
   paste,
   query,
 } from "discourse/tests/helpers/qunit-helpers";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 let uploadNumber = 1;
 
@@ -92,23 +92,23 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
     await visit("/");
     await click("#create-topic");
     await fillIn(".d-editor-input", "The image:\n");
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     appEvents.on("composer:all-uploads-complete", async () => {
       await settled();
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n"
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue(
+          "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n"
+        );
       done();
     });
 
     appEvents.on("composer:upload-started", () => {
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n[Uploading: avatar.png…]()\n"
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue("The image:\n[Uploading: avatar.png…]()\n");
     });
 
     const image = createFile("avatar.png");
@@ -123,15 +123,16 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
       await visit("/");
       await click("#create-topic");
       await fillIn(".d-editor-input", "The image:\n");
-      const appEvents = loggedInUser().appEvents;
+      const appEvents = getOwner(this).lookup("service:app-events");
       const done = assert.async();
 
       appEvents.on("composer:all-uploads-complete", async () => {
         await settled();
-        assert.strictEqual(
-          query(".d-editor-input").value,
-          "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n![avatar2.PNG|690x320](upload://sdfljsdfgjlkwg4328.jpeg)\n"
-        );
+        assert
+          .dom(".d-editor-input")
+          .hasValue(
+            "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n![avatar2.PNG|690x320](upload://sdfljsdfgjlkwg4328.jpeg)\n"
+          );
         done();
       });
 
@@ -161,23 +162,23 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
     await visit("/");
     await click("#create-topic");
     await fillIn(".d-editor-input", "The image:\n");
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     appEvents.on("composer:all-uploads-complete", async () => {
       await settled();
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n"
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue(
+          "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n"
+        );
       done();
     });
 
     appEvents.on("composer:upload-started", () => {
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n[Uploading: avatar.png…]()\n"
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue("The image:\n[Uploading: avatar.png…]()\n");
     });
 
     const image = createFile("avatar.png");
@@ -187,19 +188,18 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
   test("should error if too many files are added at once", async function (assert) {
     await visit("/");
     await click("#create-topic");
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const image = createFile("avatar.png");
     const image1 = createFile("avatar1.png");
     const image2 = createFile("avatar2.png");
     const done = assert.async();
     appEvents.on("composer:uploads-aborted", async () => {
       await settled();
-      assert.strictEqual(
-        query(".dialog-body").textContent.trim(),
-        I18n.t("post.errors.too_many_dragged_and_dropped_files", {
+      assert.dom(".dialog-body").hasText(
+        i18n("post.errors.too_many_dragged_and_dropped_files", {
           count: 2,
         }),
-        "it should warn about too many files added"
+        "warns about too many files added"
       );
 
       await click(".dialog-footer .btn-primary");
@@ -213,21 +213,20 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
   test("should error if an unauthorized extension file is added", async function (assert) {
     await visit("/");
     await click("#create-topic");
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const jsonFile = createFile("something.json", "application/json");
     const done = assert.async();
 
     appEvents.on("composer:uploads-aborted", async () => {
       await settled();
-      assert.strictEqual(
-        query(".dialog-body").textContent.trim(),
-        I18n.t("post.errors.upload_not_authorized", {
+      assert.dom(".dialog-body").hasText(
+        i18n("post.errors.upload_not_authorized", {
           authorized_extensions: authorizedExtensions(
             false,
             this.siteSettings
           ).join(", "),
         }),
-        "it should warn about unauthorized extensions"
+        "warns about unauthorized extensions"
       );
 
       await click(".dialog-footer .btn-primary");
@@ -246,25 +245,24 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
     const image = createFile("avatar.png");
     const image2 = createFile("avatar2.png");
 
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     let uploadStarted = 0;
     appEvents.on("composer:upload-started", () => {
       uploadStarted++;
 
       if (uploadStarted === 2) {
-        assert.strictEqual(
-          query(".d-editor-input").value,
-          "The image:\n[Uploading: avatar.png…]()\n[Uploading: avatar2.png…]()\n",
-          "it should show the upload placeholders when the upload starts"
-        );
+        assert
+          .dom(".d-editor-input")
+          .hasValue(
+            "The image:\n[Uploading: avatar.png…]()\n[Uploading: avatar2.png…]()\n",
+            "it should show the upload placeholders when the upload starts"
+          );
       }
     });
     appEvents.on("composer:uploads-cancelled", () => {
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n",
-        "it should clear the cancelled placeholders"
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue("The image:\n", "it should clear the cancelled placeholders");
     });
 
     await new Promise(function (resolve) {
@@ -280,22 +278,22 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
     await visit("/");
     await click("#create-topic");
     await fillIn(".d-editor-input", "The image:");
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     appEvents.on("composer:upload-started", () => {
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n[Uploading: avatar.png…]()\n"
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue("The image:\n[Uploading: avatar.png…]()\n");
     });
 
     appEvents.on("composer:all-uploads-complete", async () => {
       await settled();
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n"
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue(
+          "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n"
+        );
       done();
     });
 
@@ -311,22 +309,24 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
     textArea.selectionStart = 10;
     textArea.selectionEnd = 10;
 
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     appEvents.on("composer:upload-started", () => {
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n[Uploading: avatar.png…]()\n Text after the image."
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue(
+          "The image:\n[Uploading: avatar.png…]()\n Text after the image."
+        );
     });
 
     appEvents.on("composer:all-uploads-complete", async () => {
       await settled();
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n Text after the image."
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue(
+          "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n Text after the image."
+        );
       done();
     });
 
@@ -345,22 +345,24 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
     textArea.selectionStart = 10;
     textArea.selectionEnd = 23;
 
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     appEvents.on("composer:upload-started", () => {
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n[Uploading: avatar.png…]()\n Text after the image."
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue(
+          "The image:\n[Uploading: avatar.png…]()\n Text after the image."
+        );
     });
 
     appEvents.on("composer:all-uploads-complete", async () => {
       await settled();
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n Text after the image."
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue(
+          "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n Text after the image."
+        );
       done();
     });
 
@@ -371,22 +373,20 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
   test("should insert a newline only after an image when pasting into an empty composer", async function (assert) {
     await visit("/");
     await click("#create-topic");
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     appEvents.on("composer:upload-started", () => {
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "[Uploading: avatar.png…]()\n"
-      );
+      assert.dom(".d-editor-input").hasValue("[Uploading: avatar.png…]()\n");
     });
 
     appEvents.on("composer:all-uploads-complete", async () => {
       await settled();
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n"
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue(
+          "![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n"
+        );
       done();
     });
 
@@ -398,22 +398,22 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
     await visit("/");
     await click("#create-topic");
     await fillIn(".d-editor-input", "The image:\n");
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     appEvents.on("composer:upload-started", () => {
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n[Uploading: avatar.png…]()\n"
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue("The image:\n[Uploading: avatar.png…]()\n");
     });
 
     appEvents.on("composer:all-uploads-complete", async () => {
       await settled();
-      assert.strictEqual(
-        query(".d-editor-input").value,
-        "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n"
-      );
+      assert
+        .dom(".d-editor-input")
+        .hasValue(
+          "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\n"
+        );
       done();
     });
 
@@ -422,7 +422,7 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
   });
 
   skip("should place cursor properly after inserting a placeholder", async function (assert) {
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     await visit("/");
@@ -436,8 +436,8 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
       // after uploading we have this in the textarea:
       // "The image:\n![avatar.PNG|690x320](upload://yoj8pf9DdIeHRRULyw7i57GAYdz.jpeg)\ntext after image"
       // cursor should be just before "text after image":
-      assert.equal(input.selectionStart, 76);
-      assert.equal(input.selectionEnd, 76);
+      assert.strictEqual(input.selectionStart, 76);
+      assert.strictEqual(input.selectionEnd, 76);
       done();
     });
 
@@ -448,7 +448,7 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
   test("should be able to paste a table with files and not upload the files", async function (assert) {
     await visit("/");
     await click("#create-topic");
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     let uppyEventFired = false;
@@ -466,16 +466,13 @@ acceptance("Uppy Composer Attachment - Upload Placeholder", function (needs) {
     });
     await settled();
 
-    assert.strictEqual(
-      inputElement.value,
-      "||a|b|\n|---|---|---|\n|1|2|3|\n",
-      "only the plain text table is pasted"
-    );
-    assert.strictEqual(
-      uppyEventFired,
-      false,
-      "uppy does not start uploading the file"
-    );
+    assert
+      .dom(inputElement)
+      .hasValue(
+        "||a|b|\n|---|---|---|\n|1|2|3|\n",
+        "only the plain text table is pasted"
+      );
+    assert.false(uppyEventFired, "uppy does not start uploading the file");
     done();
   });
 });
@@ -498,28 +495,20 @@ acceptance("Uppy Composer Attachment - Upload Error", function (needs) {
   });
 
   test("should show an error message for the failed upload", async function (assert) {
-    // Don't log the upload error
-    const stub = sinon
-      .stub(console, "error")
-      .withArgs(
-        sinon.match(/\[Uppy\]/),
-        sinon.match(/Failed to upload avatar\.png/)
-      );
-
     await visit("/");
     await click("#create-topic");
     await fillIn(".d-editor-input", "The image:\n");
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     appEvents.on("composer:upload-error", async () => {
-      sinon.assert.calledOnce(stub);
       await settled();
-      assert.strictEqual(
-        query(".dialog-body").textContent.trim(),
-        "There was an error uploading the file, the gif was way too cool.",
-        "it should show the error message from the server"
-      );
+      assert
+        .dom(".dialog-body")
+        .hasText(
+          "There was an error uploading the file, the gif was way too cool.",
+          "shows the error message from the server"
+        );
 
       await click(".dialog-footer .btn-primary");
       done();
@@ -529,6 +518,52 @@ acceptance("Uppy Composer Attachment - Upload Error", function (needs) {
     appEvents.trigger("composer:add-files", image);
   });
 });
+
+acceptance(
+  "Uppy Composer Attachment - Multiple Upload Errors",
+  function (needs) {
+    needs.user();
+    needs.pretender((server, helper) => {
+      server.post("/uploads.json", () => {
+        return helper.response(500, {
+          success: false,
+        });
+      });
+    });
+    needs.settings({
+      simultaneous_uploads: 2,
+      allow_uncategorized_topics: true,
+    });
+
+    test("should show a consolidated message for multiple failed uploads", async function (assert) {
+      await visit("/");
+      await click("#create-topic");
+      const appEvents = getOwner(this).lookup("service:app-events");
+      const image = createFile("meme1.png");
+      const image1 = createFile("meme2.png");
+      const done = assert.async();
+
+      appEvents.on("composer:upload-error", async () => {
+        await settled();
+
+        if (query(".dialog-body")) {
+          assert
+            .dom(".dialog-body")
+            .hasText(
+              "Sorry, there was an error uploading meme1.png and meme2.png. Please try again.",
+              "it should show a consolidated error dialog"
+            );
+
+          await click(".dialog-footer .btn-primary");
+
+          done();
+        }
+      });
+
+      appEvents.trigger("composer:add-files", [image, image1]);
+    });
+  }
+);
 
 acceptance("Uppy Composer Attachment - Upload Handler", function (needs) {
   needs.user();
@@ -553,16 +588,17 @@ acceptance("Uppy Composer Attachment - Upload Handler", function (needs) {
     await visit("/");
     await click("#create-topic");
     const image = createFile("handler-test.png");
-    const appEvents = loggedInUser().appEvents;
+    const appEvents = getOwner(this).lookup("service:app-events");
     const done = assert.async();
 
     appEvents.on("composer:uploads-aborted", async () => {
       await settled();
-      assert.strictEqual(
-        query(".dialog-body").textContent.trim(),
-        "This is an upload handler test for handler-test.png. The file WAS a native file object.",
-        "it should show the dialog triggered by the upload handler"
-      );
+      assert
+        .dom(".dialog-body")
+        .hasText(
+          "This is an upload handler test for handler-test.png. The file WAS a native file object.",
+          "shows the dialog triggered by the upload handler"
+        );
       await click(".dialog-footer .btn-primary");
       done();
     });

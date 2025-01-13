@@ -1,50 +1,97 @@
 import Component from "@ember/component";
-import { alias, and } from "@ember/object/computed";
-import { on } from "@ember/object/evented";
-import { inject as service } from "@ember/service";
+import { dependentKeyCompat } from "@ember/object/compat";
+import { alias } from "@ember/object/computed";
+import { service } from "@ember/service";
+import {
+  classNameBindings,
+  classNames,
+  tagName,
+} from "@ember-decorators/component";
+import { observes, on } from "@ember-decorators/object";
+import discourseComputed from "discourse/lib/decorators";
+import deprecated from "discourse/lib/deprecated";
+import { RAW_TOPIC_LIST_DEPRECATION_OPTIONS } from "discourse/lib/plugin-api";
 import LoadMore from "discourse/mixins/load-more";
-import discourseComputed, { observes } from "discourse-common/utils/decorators";
-import TopicBulkActions from "./modal/topic-bulk-actions";
 
-export default Component.extend(LoadMore, {
-  modal: service(),
+@tagName("table")
+@classNames("topic-list")
+@classNameBindings("bulkSelectEnabled:sticky-header")
+export default class TopicList extends Component.extend(LoadMore) {
+  static reopen() {
+    deprecated(
+      "Modifying topic-list with `reopen` is deprecated. Use the value transformer `topic-list-columns` and other new topic-list plugin APIs instead.",
+      RAW_TOPIC_LIST_DEPRECATION_OPTIONS
+    );
 
-  tagName: "table",
-  classNames: ["topic-list"],
-  classNameBindings: ["bulkSelectEnabled:sticky-header"],
-  showTopicPostBadges: true,
-  listTitle: "topic.title",
-  canDoBulkActions: and("currentUser.canManageTopic", "selected.length"),
+    return super.reopen(...arguments);
+  }
+
+  static reopenClass() {
+    deprecated(
+      "Modifying topic-list with `reopenClass` is deprecated. Use the value transformer `topic-list-columns` and other new topic-list plugin APIs instead.",
+      RAW_TOPIC_LIST_DEPRECATION_OPTIONS
+    );
+
+    return super.reopenClass(...arguments);
+  }
+
+  @service modal;
+  @service router;
+  @service siteSettings;
+
+  showTopicPostBadges = true;
+  listTitle = "topic.title";
+  lastCheckedElementId = null;
 
   // Overwrite this to perform client side filtering of topics, if desired
-  filteredTopics: alias("topics"),
+  @alias("topics") filteredTopics;
 
-  _init: on("init", function () {
+  get canDoBulkActions() {
+    return (
+      this.currentUser?.canManageTopic && this.bulkSelectHelper?.selected.length
+    );
+  }
+
+  @on("init")
+  _init() {
     this.addObserver("hideCategory", this.rerender);
     this.addObserver("order", this.rerender);
     this.addObserver("ascending", this.rerender);
     this.refreshLastVisited();
-  }),
+  }
 
-  @discourseComputed("bulkSelectEnabled")
-  toggleInTitle(bulkSelectEnabled) {
-    return !bulkSelectEnabled && this.canBulkSelect;
-  },
+  get selected() {
+    return this.bulkSelectHelper?.selected;
+  }
+
+  // for the classNameBindings
+  @dependentKeyCompat
+  get bulkSelectEnabled() {
+    return (
+      this.get("canBulkSelect") && this.bulkSelectHelper?.bulkSelectEnabled
+    );
+  }
+
+  get toggleInTitle() {
+    return (
+      !this.bulkSelectHelper?.bulkSelectEnabled && this.get("canBulkSelect")
+    );
+  }
 
   @discourseComputed
   sortable() {
     return !!this.changeSort;
-  },
+  }
 
   @discourseComputed("order")
   showLikes(order) {
     return order === "likes";
-  },
+  }
 
   @discourseComputed("order")
   showOpLikes(order) {
     return order === "op_likes";
-  },
+  }
 
   @observes("topics.[]")
   topicsAdded() {
@@ -52,24 +99,24 @@ export default Component.extend(LoadMore, {
     if (!this.lastVisitedTopic) {
       this.refreshLastVisited();
     }
-  },
+  }
 
-  @observes("topics", "order", "ascending", "category", "top")
+  @observes("topics", "order", "ascending", "category", "top", "hot")
   lastVisitedTopicChanged() {
     this.refreshLastVisited();
-  },
+  }
 
   scrolled() {
-    this._super(...arguments);
+    super.scrolled(...arguments);
     let onScroll = this.onScroll;
     if (!onScroll) {
       return;
     }
 
     onScroll.call(this);
-  },
+  }
 
-  _updateLastVisitedTopic(topics, order, ascending, top) {
+  _updateLastVisitedTopic(topics, order, ascending, top, hot) {
     this.set("lastVisitedTopic", null);
 
     if (!this.highlightLastVisited) {
@@ -80,7 +127,7 @@ export default Component.extend(LoadMore, {
       return;
     }
 
-    if (top) {
+    if (top || hot) {
       return;
     }
 
@@ -127,20 +174,17 @@ export default Component.extend(LoadMore, {
     }
 
     this.set("lastVisitedTopic", lastVisitedTopic);
-  },
+  }
 
   refreshLastVisited() {
     this._updateLastVisitedTopic(
       this.topics,
       this.order,
       this.ascending,
-      this.top
+      this.top,
+      this.hot
     );
-  },
-
-  updateAutoAddTopicsToBulkSelect(newVal) {
-    this.set("autoAddTopicsToBulkSelect", newVal);
-  },
+  }
 
   click(e) {
     const onClick = (sel, callback) => {
@@ -152,19 +196,19 @@ export default Component.extend(LoadMore, {
     };
 
     onClick("button.bulk-select", () => {
-      this.toggleBulkSelect();
+      this.bulkSelectHelper.toggleBulkSelect();
       this.rerender();
     });
 
     onClick("button.bulk-select-all", () => {
-      this.updateAutoAddTopicsToBulkSelect(true);
+      this.bulkSelectHelper.autoAddTopicsToBulkSelect = true;
       document
         .querySelectorAll("input.bulk-select:not(:checked)")
         .forEach((el) => el.click());
     });
 
     onClick("button.bulk-clear-all", () => {
-      this.updateAutoAddTopicsToBulkSelect(false);
+      this.bulkSelectHelper.autoAddTopicsToBulkSelect = false;
       document
         .querySelectorAll("input.bulk-select:checked")
         .forEach((el) => el.click());
@@ -173,16 +217,6 @@ export default Component.extend(LoadMore, {
     onClick("th.sortable", (element) => {
       this.changeSort(element.dataset.sortOrder);
       this.rerender();
-    });
-
-    onClick("button.bulk-select-actions", () => {
-      this.modal.show(TopicBulkActions, {
-        model: {
-          topics: this.selected,
-          category: this.category,
-          refreshClosure: this.bulkSelectAction,
-        },
-      });
     });
 
     onClick("button.topics-replies-toggle", (element) => {
@@ -195,7 +229,7 @@ export default Component.extend(LoadMore, {
       }
       this.rerender();
     });
-  },
+  }
 
   keyDown(e) {
     if (e.key === "Enter" || e.key === " ") {
@@ -208,9 +242,10 @@ export default Component.extend(LoadMore, {
       };
 
       onKeyDown("th.sortable", (element) => {
+        e.preventDefault();
         this.changeSort(element.dataset.sortOrder);
         this.rerender();
       });
     }
-  },
-});
+  }
+}

@@ -129,6 +129,8 @@ module Email
       # always set a default Message ID from the host
       @message.header["Message-ID"] = Email::MessageIdService.generate_default
 
+      post = nil
+      topic = nil
       if topic_id.present? && post_id.present?
         post = Post.find_by(id: post_id, topic_id: topic_id)
 
@@ -138,7 +140,6 @@ module Email
         topic = post.topic
         return skip(SkippedEmailLog.reason_types[:sender_topic_deleted]) if topic.blank?
 
-        add_attachments(post)
         add_identification_field_headers(topic, post)
 
         # See https://www.ietf.org/rfc/rfc2919.txt for the List-ID
@@ -170,7 +171,9 @@ module Email
 
           if topic
             if SiteSetting.private_email?
-              @message.header["List-Archive"] = "#{Discourse.base_url}#{topic.slugless_url}"
+              @message.header[
+                "List-Archive"
+              ] = "#{Discourse.base_url_no_prefix}#{topic.slugless_url}"
             else
               @message.header["List-Archive"] = topic.url
             end
@@ -249,6 +252,13 @@ module Email
       # Parse the HTML again so we can make any final changes before
       # sending
       style = Email::Styles.new(@message.html_part.body.to_s)
+      if post.present?
+        @stripped_secure_upload_shas = style.stripped_upload_sha_map.values
+        add_attachments(post)
+      elsif @email_type.to_s == "digest"
+        @stripped_secure_upload_shas = style.stripped_upload_sha_map.values
+        add_attachments(*digest_posts)
+      end
 
       # Suppress images from short emails
       if SiteSetting.strip_images_from_short_emails &&
@@ -342,43 +352,51 @@ module Email
 
     private
 
-    def add_attachments(post)
+    def digest_posts
+      Post.where(id: header_value("X-Discourse-Post-Ids")&.split(","))
+    end
+
+    def add_attachments(*posts)
       max_email_size = SiteSetting.email_total_attachment_size_limit_kb.kilobytes
       return if max_email_size == 0
 
       email_size = 0
-      post.uploads.each do |original_upload|
-        optimized_1X = original_upload.optimized_images.first
+      posts.each do |post|
+        next unless DiscoursePluginRegistry.apply_modifier(:should_add_email_attachments, post)
 
-        if FileHelper.is_supported_image?(original_upload.original_filename) &&
-             !should_attach_image?(original_upload, optimized_1X)
-          next
-        end
+        post.uploads.each do |original_upload|
+          optimized_1X = original_upload.optimized_images.first
 
-        attached_upload = optimized_1X || original_upload
-        next if email_size + attached_upload.filesize > max_email_size
+          if FileHelper.is_supported_image?(original_upload.original_filename) &&
+               !should_attach_image?(original_upload, optimized_1X)
+            next
+          end
 
-        begin
-          path =
-            if attached_upload.local?
-              Discourse.store.path_for(attached_upload)
-            else
-              Discourse.store.download!(attached_upload).path
-            end
+          attached_upload = optimized_1X || original_upload
+          next if email_size + attached_upload.filesize > max_email_size
 
-          @message_attachments_index[original_upload.sha1] = @message.attachments.size
-          @message.attachments[original_upload.original_filename] = File.read(path)
-          email_size += File.size(path)
-        rescue => e
-          Discourse.warn_exception(
-            e,
-            message: "Failed to attach file to email",
-            env: {
-              post_id: post.id,
-              upload_id: original_upload.id,
-              filename: original_upload.original_filename,
-            },
-          )
+          begin
+            path =
+              if attached_upload.local?
+                Discourse.store.path_for(attached_upload)
+              else
+                Discourse.store.download!(attached_upload).path
+              end
+
+            @message_attachments_index[original_upload.sha1] = @message.attachments.size
+            @message.attachments[original_upload.original_filename] = File.read(path)
+            email_size += File.size(path)
+          rescue => e
+            Discourse.warn_exception(
+              e,
+              message: "Failed to attach file to email",
+              env: {
+                post_id: post.id,
+                upload_id: original_upload.id,
+                filename: original_upload.original_filename,
+              },
+            )
+          end
         end
       end
 
@@ -386,7 +404,17 @@ module Email
     end
 
     def should_attach_image?(upload, optimized_1X = nil)
-      return if !SiteSetting.secure_uploads_allow_embed_images_in_emails || !upload.secure?
+      if !SiteSetting.secure_uploads_allow_embed_images_in_emails ||
+           # Sometimes images in a post have a secure URL but are not secure uploads,
+           # for example if a user uploads an image to a public post then copies the markdown
+           # into a PM which sends an email, so we have to make sure we attached those
+           # stripped images here as well.
+           (
+             !upload.secure? && !@stripped_secure_upload_shas.include?(upload.sha1) &&
+               !@stripped_secure_upload_shas.include?(optimized_1X&.sha1)
+           )
+        return
+      end
       if (optimized_1X&.filesize || upload.filesize) >
            SiteSetting.secure_uploads_max_email_embed_image_size_kb.kilobytes
         return
@@ -411,18 +439,26 @@ module Email
     # Due to mail gem magic, @message.text_part and @message.html_part still
     # refer to the same objects.
     #
+    # Most imporantly, we need to specify the boundary for the multipart/mixed
+    # part of the email, otherwise we can end up with an email that appears to
+    # be empty with the entire body attached as a single attachment, and some
+    # mail parsers consider the entire email as a preamble/epilogue.
+    #
+    # c.f. https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
     def fix_parts_after_attachments!
       has_attachments = @message.attachments.present?
       has_alternative_renderings = @message.html_part.present? && @message.text_part.present?
 
       if has_attachments && has_alternative_renderings
-        @message.content_type = "multipart/mixed"
+        @message.content_type = "multipart/mixed; boundary=\"#{@message.body.boundary}\""
 
         html_part = @message.html_part
         @message.html_part = nil
+        @message.parts.reject! { |p| p.content_type.start_with?("text/html") }
 
         text_part = @message.text_part
         @message.text_part = nil
+        @message.parts.reject! { |p| p.content_type.start_with?("text/plain") }
 
         content =
           Mail::Part.new do

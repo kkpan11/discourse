@@ -1,11 +1,11 @@
 import Component from "@ember/component";
 import { action } from "@ember/object";
 import { schedule } from "@ember/runloop";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
 import { classNames, tagName } from "@ember-decorators/component";
-import discourseComputed from "discourse-common/utils/decorators";
+import discourseComputed from "discourse/lib/decorators";
+import { i18n } from "discourse-i18n";
 import ScreenedIpAddress from "admin/models/screened-ip-address";
-import I18n from "I18n";
 
 /**
   A form to create an IP address that will be blocked or allowed.
@@ -30,22 +30,22 @@ export default class ScreenedIpAddressForm extends Component {
   actionNames(adminAllowlistEnabled) {
     if (adminAllowlistEnabled) {
       return [
-        { id: "block", name: I18n.t("admin.logs.screened_ips.actions.block") },
+        { id: "block", name: i18n("admin.logs.screened_ips.actions.block") },
         {
           id: "do_nothing",
-          name: I18n.t("admin.logs.screened_ips.actions.do_nothing"),
+          name: i18n("admin.logs.screened_ips.actions.do_nothing"),
         },
         {
           id: "allow_admin",
-          name: I18n.t("admin.logs.screened_ips.actions.allow_admin"),
+          name: i18n("admin.logs.screened_ips.actions.allow_admin"),
         },
       ];
     } else {
       return [
-        { id: "block", name: I18n.t("admin.logs.screened_ips.actions.block") },
+        { id: "block", name: i18n("admin.logs.screened_ips.actions.block") },
         {
           id: "do_nothing",
-          name: I18n.t("admin.logs.screened_ips.actions.do_nothing"),
+          name: i18n("admin.logs.screened_ips.actions.do_nothing"),
         },
       ];
     }
@@ -75,10 +75,10 @@ export default class ScreenedIpAddressForm extends Component {
         .catch((e) => {
           this.set("formSubmitted", false);
           const message = e.jqXHR.responseJSON?.errors
-            ? I18n.t("generic_error_with_reason", {
+            ? i18n("generic_error_with_reason", {
                 error: e.jqXHR.responseJSON.errors.join(". "),
               })
-            : I18n.t("generic_error");
+            : i18n("generic_error");
           this.dialog.alert({
             message,
             didConfirm: () => this.focusInput(),

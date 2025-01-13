@@ -48,14 +48,14 @@ RSpec.describe Discourse do
     context "with a non standard port specified" do
       before { SiteSetting.port = 3000 }
 
-      it "returns the non standart port in the base url" do
+      it "returns the non standard port in the base url" do
         expect(Discourse.base_url).to eq("http://foo.com:3000")
       end
     end
   end
 
   describe "asset_filter_options" do
-    it "obmits path if request is missing" do
+    it "omits path if request is missing" do
       opts = Discourse.asset_filter_options(:js, nil)
       expect(opts[:path]).to be_blank
     end
@@ -64,6 +64,30 @@ RSpec.describe Discourse do
       req = stub(fullpath: "/hello", headers: {})
       opts = Discourse.asset_filter_options(:js, req)
       expect(opts[:path]).to eq("/hello")
+    end
+  end
+
+  describe ".plugins_sorted_by_name" do
+    before do
+      Discourse.stubs(:visible_plugins).returns(
+        [
+          stub(enabled?: false, name: "discourse-doctor-sleep", humanized_name: "Doctor Sleep"),
+          stub(enabled?: true, name: "discourse-shining", humanized_name: "The Shining"),
+          stub(enabled?: true, name: "discourse-misery", humanized_name: "misery"),
+        ],
+      )
+    end
+
+    it "sorts enabled plugins by humanized name" do
+      expect(Discourse.plugins_sorted_by_name.map(&:name)).to eq(
+        %w[discourse-misery discourse-shining],
+      )
+    end
+
+    it "sorts both enabled and disabled plugins when that option is provided" do
+      expect(Discourse.plugins_sorted_by_name(enabled_only: false).map(&:name)).to eq(
+        %w[discourse-doctor-sleep discourse-misery discourse-shining],
+      )
     end
   end
 
@@ -171,7 +195,7 @@ RSpec.describe Discourse do
   end
 
   describe "#site_contact_user" do
-    fab!(:admin) { Fabricate(:admin) }
+    fab!(:admin)
     fab!(:another_admin) { Fabricate(:admin) }
 
     it "returns the user specified by the site setting site_contact_username" do
@@ -229,6 +253,16 @@ RSpec.describe Discourse do
     end
 
     describe ".enable_readonly_mode" do
+      it "doesn't expire when expires is false" do
+        Discourse.enable_readonly_mode(user_readonly_mode_key, expires: false)
+        expect(Discourse.redis.ttl(user_readonly_mode_key)).to eq(-1)
+      end
+
+      it "expires when expires is true" do
+        Discourse.enable_readonly_mode(user_readonly_mode_key, expires: true)
+        expect(Discourse.redis.ttl(user_readonly_mode_key)).not_to eq(-1)
+      end
+
       it "adds a key in redis and publish a message through the message bus" do
         expect(Discourse.redis.get(readonly_mode_key)).to eq(nil)
       end
@@ -412,12 +446,11 @@ RSpec.describe Discourse do
       old_method(m)
     end
 
-    before do
-      @orig_logger = Rails.logger
-      Rails.logger = @fake_logger = FakeLogger.new
-    end
+    let(:fake_logger) { FakeLogger.new }
 
-    after { Rails.logger = @orig_logger }
+    before { Rails.logger.broadcast_to(fake_logger) }
+
+    after { Rails.logger.stop_broadcasting_to(fake_logger) }
 
     it "can deprecate usage" do
       k = SecureRandom.hex
@@ -425,19 +458,19 @@ RSpec.describe Discourse do
       expect(old_method_caller(k)).to include("discourse_spec")
       expect(old_method_caller(k)).to include(k)
 
-      expect(@fake_logger.warnings).to eq([old_method_caller(k)])
+      expect(fake_logger.warnings).to eq([old_method_caller(k)])
     end
 
     it "can report the deprecated version" do
       Discourse.deprecate(SecureRandom.hex, since: "2.1.0.beta1")
 
-      expect(@fake_logger.warnings[0]).to include("(deprecated since Discourse 2.1.0.beta1)")
+      expect(fake_logger.warnings[0]).to include("(deprecated since Discourse 2.1.0.beta1)")
     end
 
     it "can report the drop version" do
       Discourse.deprecate(SecureRandom.hex, drop_from: "2.3.0")
 
-      expect(@fake_logger.warnings[0]).to include("(removal in Discourse 2.3.0)")
+      expect(fake_logger.warnings[0]).to include("(removal in Discourse 2.3.0)")
     end
 
     it "can raise deprecation error" do
@@ -451,7 +484,7 @@ RSpec.describe Discourse do
     it "works for individual commands" do
       expect(Discourse::Utils.execute_command("pwd").strip).to eq(Rails.root.to_s)
       expect(Discourse::Utils.execute_command("pwd", chdir: "plugins").strip).to eq(
-        "#{Rails.root.to_s}/plugins",
+        "#{Rails.root}/plugins",
       )
     end
 
@@ -477,12 +510,12 @@ RSpec.describe Discourse do
 
       result =
         Discourse::Utils.execute_command(chdir: "plugins") do |runner|
-          expect(runner.exec("pwd").strip).to eq("#{Rails.root.to_s}/plugins")
+          expect(runner.exec("pwd").strip).to eq("#{Rails.root}/plugins")
           runner.exec("pwd")
         end
 
       # Should return output of block
-      expect(result.strip).to eq("#{Rails.root.to_s}/plugins")
+      expect(result.strip).to eq("#{Rails.root}/plugins")
     end
 
     it "does not leak chdir between threads" do

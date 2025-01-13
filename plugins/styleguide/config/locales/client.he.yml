@@ -10,10 +10,13 @@ he:
       title: "מדריך סגנון"
       welcome: "כדי להתחיל, יש לבחור בסעיף מהתפריט שמימין."
       categories:
+        syntax: תחביר
         atoms: אטומים
         molecules: מולקולות
         organisms: אורגניזמים
       sections:
+        bem:
+          title: "BEM (מחליף רכיב מקטע)"
         typography:
           title: "טיפוגרפיה"
           example: "ברוך בואך ל־Discourse"
@@ -31,8 +34,8 @@ he:
         icons:
           title: "סמלים"
           full_list: "הצגת רשימת הסמלים המלאה של Font Awesome"
-        input_fields:
-          title: "שדות קלט"
+        forms:
+          title: "טפסים"
         buttons:
           title: "כפתורים"
         dropdowns:
@@ -71,6 +74,10 @@ he:
           title: "התראות על נושאים"
         post:
           title: "פוסט"
+        post_list:
+          title: "רשימת פוסטים"
+          empty_example: "<PostList /> מצב ריק"
+          populated_example: "<PostList /> מצב מאוכלס"
         topic_map:
           title: "מפת נושאים"
         site_header:

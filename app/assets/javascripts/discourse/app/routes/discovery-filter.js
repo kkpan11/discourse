@@ -1,46 +1,26 @@
-import { action } from "@ember/object";
+import { setTopicList } from "discourse/lib/topic-list-tracker";
+import { escapeExpression } from "discourse/lib/utilities";
 import DiscourseRoute from "discourse/routes/discourse";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 export default class DiscoveryFilterRoute extends DiscourseRoute {
   queryParams = {
-    q: { replace: true, refreshModel: true },
+    q: { refreshModel: true },
   };
 
-  model(data) {
-    return this.store.findFiltered("topicList", {
+  async model(data) {
+    const list = await this.store.findFiltered("topicList", {
       filter: "filter",
       params: { q: data.q },
     });
+
+    setTopicList(list);
+
+    return list;
   }
 
   titleToken() {
-    const filterText = I18n.t("filters.filter.title");
-    return I18n.t("filters.with_topics", { filter: filterText });
+    const query = this.paramsFor(this.routeName).q;
+    return i18n("filters.filter.title", { filter: escapeExpression(query) });
   }
-
-  setupController(_controller, model) {
-    this.controllerFor("discovery/topics").setProperties({ model });
-
-    this.controllerFor("navigation/filter").setProperties({
-      newQueryString: this.paramsFor("discovery.filter").q,
-    });
-  }
-
-  renderTemplate() {
-    this.render("navigation/filter", { outlet: "navigation-bar" });
-
-    this.render("discovery/topics", {
-      controller: "discovery/topics",
-      outlet: "list-container",
-    });
-  }
-
-  // TODO(tgxworld): The following 2 actions are required by the `discovery/topics` controller which is not necessary for this route.
-  // Figure out a way to remove this.
-  @action
-  changeSort() {}
-
-  @action
-  changeNewListSubset() {}
 }

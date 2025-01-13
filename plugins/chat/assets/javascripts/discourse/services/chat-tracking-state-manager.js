@@ -1,7 +1,7 @@
-import { getOwner } from "@ember/application";
+import { getOwner } from "@ember/owner";
 import { cancel } from "@ember/runloop";
-import Service, { inject as service } from "@ember/service";
-import discourseDebounce from "discourse-common/lib/debounce";
+import Service, { service } from "@ember/service";
+import discourseDebounce from "discourse/lib/debounce";
 import ChatTrackingState from "discourse/plugins/chat/discourse/models/chat-tracking-state";
 
 /**
@@ -23,6 +23,11 @@ export default class ChatTrackingStateManager extends Service {
 
   // NOTE: In future, we may want to preload some thread tracking state
   // as well, but for now we do that on demand when the user opens a channel,
+  willDestroy() {
+    super.willDestroy(...arguments);
+    cancel(this._onTriggerNotificationDebounceHandler);
+  }
+
   // to avoid having to load all the threads across all channels into memory at once.
   setupWithPreloadedState({ channel_tracking = {} }) {
     this.chatChannelsManager.channels.forEach((channel) => {
@@ -42,32 +47,49 @@ export default class ChatTrackingStateManager extends Service {
   }
 
   get publicChannelUnreadCount() {
-    return this.#publicChannels().reduce((unreadCount, channel) => {
+    return this.#publicChannels.reduce((unreadCount, channel) => {
       return unreadCount + channel.tracking.unreadCount;
     }, 0);
   }
 
-  get allChannelUrgentCount() {
-    let publicChannelMentionCount = this.#publicChannels().reduce(
-      (mentionCount, channel) => {
-        return mentionCount + channel.tracking.mentionCount;
-      },
-      0
-    );
-
-    let dmChannelUnreadCount = this.#directMessageChannels().reduce(
-      (unreadCount, channel) => {
-        return unreadCount + channel.tracking.unreadCount;
-      },
-      0
-    );
-
-    return publicChannelMentionCount + dmChannelUnreadCount;
+  get directMessageUnreadCount() {
+    return this.#directMessageChannels.reduce((unreadCount, channel) => {
+      return unreadCount + channel.tracking.unreadCount;
+    }, 0);
   }
 
-  willDestroy() {
-    super.willDestroy(...arguments);
-    cancel(this._onTriggerNotificationDebounceHandler);
+  get publicChannelMentionCount() {
+    return this.#publicChannels.reduce((mentionCount, channel) => {
+      return mentionCount + channel.tracking.mentionCount;
+    }, 0);
+  }
+
+  get directMessageMentionCount() {
+    return this.#directMessageChannels.reduce((dmMentionCount, channel) => {
+      return dmMentionCount + channel.tracking.mentionCount;
+    }, 0);
+  }
+
+  get allChannelMentionCount() {
+    return this.publicChannelMentionCount + this.directMessageMentionCount;
+  }
+
+  get allChannelUrgentCount() {
+    return (
+      this.allChannelMentionCount +
+      this.directMessageUnreadCount +
+      this.watchedThreadsUnreadCount
+    );
+  }
+
+  get hasUnreadThreads() {
+    return this.#allChannels.some((channel) => channel.unreadThreadsCount > 0);
+  }
+
+  get watchedThreadsUnreadCount() {
+    return this.#allChannels.reduce((unreadCount, channel) => {
+      return unreadCount + channel.tracking.watchedThreadsUnreadCount;
+    }, 0);
   }
 
   /**
@@ -94,13 +116,19 @@ export default class ChatTrackingStateManager extends Service {
     }
     model.tracking.unreadCount = state.unread_count;
     model.tracking.mentionCount = state.mention_count;
+    model.tracking.watchedThreadsUnreadCount =
+      state.watched_threads_unread_count;
   }
 
-  #publicChannels() {
+  get #publicChannels() {
     return this.chatChannelsManager.publicMessageChannels;
   }
 
-  #directMessageChannels() {
+  get #directMessageChannels() {
     return this.chatChannelsManager.directMessageChannels;
+  }
+
+  get #allChannels() {
+    return this.chatChannelsManager.allChannels;
   }
 }

@@ -13,6 +13,8 @@ th:
           never: "ไม่เคย"
     chat:
       deleted_chat_username: ลบ
+      dates:
+        yesterday: "เมื่อวาน"
       create: "สร้าง"
       cancel: "ยกเลิก"
       channel_settings:
@@ -47,6 +49,7 @@ th:
       browse:
         back: "กลับ"
         filter_all: ทั้งหมด
+        filter_open: เปิด
         filter_closed: ปิด
       chat_message_separator:
         today: วันนี้
@@ -109,9 +112,7 @@ th:
         new_message:
           title: "ย้ายไปข้อความใหม่"
       retention_reminders:
-        public:
-          other: "%{count} วัน"
-        dm:
+        short:
           other: "%{count} วัน"
       emoji_picker:
         objects: "วัตถุ"
@@ -129,6 +130,8 @@ th:
             title: "ปกติ"
           tracking:
             title: "ติดตาม"
+          watching:
+            title: "กำลังดู"
       draft_channel_screen:
         header: "สร้างข้อความใหม่"
         cancel: "ยกเลิก"

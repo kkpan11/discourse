@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
 RSpec.describe ListController do
-  fab!(:user) { Fabricate(:user) }
+  fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
   fab!(:topic) { Fabricate(:topic, user: user) }
   fab!(:group) { Fabricate(:group, name: "AwesomeGroup") }
-  fab!(:admin) { Fabricate(:admin) }
+  fab!(:admin)
 
   before do
     admin # to skip welcome wizard at home page `/`
@@ -12,33 +12,134 @@ RSpec.describe ListController do
   end
 
   describe "#index" do
-    it "does not return a 500 for invalid input" do
-      get "/latest?min_posts=bob"
-      expect(response.status).to eq(400)
+    context "when params are invalid" do
+      it "should return a 400 response when `page` param is a string that represent a negative integer" do
+        get "/latest?page=-1"
+        expect(response.status).to eq(400)
+      end
 
-      get "/latest?max_posts=bob"
-      expect(response.status).to eq(400)
+      it "should return a 400 response when `page` param is a string larger than maximum integer value" do
+        get "/latest?page=2147483648"
+        expect(response.status).to eq(400)
 
-      get "/latest?max_posts=1111111111111111111111111111111111111111"
-      expect(response.status).to eq(400)
+        get "/latest?page=1111111111111111111111111111111111111111"
+        expect(response.status).to eq(400)
+      end
 
-      get "/latest?page=-1"
-      expect(response.status).to eq(400)
+      it "should return a 400 response when `before` param is not a string represetning an integer" do
+        get "/latest?before[1]=haxx"
+        expect(response.status).to eq(400)
+      end
 
-      get "/latest?page=2147483648"
-      expect(response.status).to eq(400)
+      it "should return a 400 response when `bumped_before` param is not a string representing an integer" do
+        get "/latest?bumped_before[1]=haxx"
+        expect(response.status).to eq(400)
+      end
 
-      get "/latest?page=1111111111111111111111111111111111111111"
-      expect(response.status).to eq(400)
+      it "should return a 400 response when `topic_ids` param is not a string representing an integer" do
+        get "/latest?topic_ids[1]=haxx"
+        expect(response.status).to eq(400)
+      end
 
-      get "/latest?tags[1]=hello"
-      expect(response.status).to eq(400)
+      it "should return a 400 response when `category` param is not a string representing an integer" do
+        get "/latest?category[1]=haxx"
+        expect(response.status).to eq(400)
+      end
 
-      get "/latest?before[1]=haxx"
-      expect(response.status).to eq(400)
+      it "should return a 400 response when `order` param is not a string" do
+        get "/latest?order[1]=haxx"
+        expect(response.status).to eq(400)
+      end
 
-      get "/latest?bumped_before[1]=haxx"
-      expect(response.status).to eq(400)
+      it "should return a 400 response when `ascending` param is not a string that is either `true` or `false`" do
+        get "/latest?ascending=maybe"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `min_posts` param is a string that does not represent an integer" do
+        get "/latest?min_posts=bob"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `max_posts` param is a string that does not represent an integer" do
+        get "/latest?max_posts=bob"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `max_posts` param is a string larger than maximum integer value" do
+        get "/latest?max_posts=1111111111111111111111111111111111111111"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `status` param is not a string" do
+        get "/latest?status%5Bsomehash%5D=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `filter` param is not a string" do
+        get "/latest?filter%5Bsomehash%5D=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `state` param is not a string" do
+        get "/latest?state%5Bsomehash%5D=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `search` param is not a string" do
+        get "/latest?search%5Bsomehash%5D=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `q` param is not a string" do
+        get "/latest?q%5Bsomehash%5D=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `f` param is not a string" do
+        get "/latest?f%5Bsomehash%5D=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `subset` param is not a string" do
+        get "/latest?subset%5Bsomehash%5D=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `group_name` param is not a string" do
+        get "/latest?group_name%5Bsomehash%5D=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `tags` param is not an array or string" do
+        get "/latest?tags[1]=hello"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `filter` param is not a string" do
+        get "/latest?filter%5Bsomehash%5D=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `match_all_tags` param is not a string that is either `true` or `false`" do
+        get "/latest?match_all_tags=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `no_subcategories` param is not a string that is either `true` or `false`" do
+        get "/latest?no_subcategories=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `no_tags` param is not a string that is either `true` or `false`" do
+        get "/latest?no_tags=something"
+        expect(response.status).to eq(400)
+      end
+
+      it "should return a 400 response when `exclude_tag` param is not a string" do
+        get "/latest?exclude_tag%5Bsomehash%5D=something"
+        expect(response.status).to eq(400)
+      end
     end
 
     it "returns 200 for legit requests" do
@@ -223,6 +324,38 @@ RSpec.describe ListController do
         expect(response.body).not_to include(restricted_tag.name)
       end
     end
+
+    context "with lazy load categories enabled" do
+      fab!(:category)
+      fab!(:subcategory) { Fabricate(:category, parent_category: category) }
+
+      before { topic.update!(category: subcategory) }
+
+      it "returns categories and parent categories if true" do
+        SiteSetting.lazy_load_categories_groups = "#{Group::AUTO_GROUPS[:everyone]}"
+
+        get "/latest.json"
+
+        expect(response.status).to eq(200)
+        expect(response.parsed_body["topic_list"]["topics"].length).to eq(1)
+        expect(response.parsed_body["topic_list"]["topics"][0]["id"]).to eq(topic.id)
+        expect(response.parsed_body["topic_list"]["categories"].length).to eq(2)
+        expect(response.parsed_body["topic_list"]["categories"].map { |c| c["id"] }).to eq(
+          [category.id, subcategory.id],
+        )
+      end
+
+      it "does not return categories if not true" do
+        SiteSetting.lazy_load_categories_groups = ""
+
+        get "/latest.json"
+
+        expect(response.status).to eq(200)
+        expect(response.parsed_body["topic_list"]["topics"].length).to eq(1)
+        expect(response.parsed_body["topic_list"]["topics"][0]["id"]).to eq(topic.id)
+        expect(response.parsed_body["topic_list"]["categories"]).to eq(nil)
+      end
+    end
   end
 
   describe "categories and X" do
@@ -270,9 +403,9 @@ RSpec.describe ListController do
   end
 
   describe "filter private messages by tag" do
-    fab!(:user) { Fabricate(:user) }
-    fab!(:moderator) { Fabricate(:moderator) }
-    fab!(:admin) { Fabricate(:admin) }
+    fab!(:user)
+    fab!(:moderator)
+    fab!(:admin)
     let(:tag) { Fabricate(:tag) }
     let(:private_message) { Fabricate(:private_message_topic, user: admin) }
 
@@ -334,7 +467,6 @@ RSpec.describe ListController do
       before do
         group.add(user)
         SiteSetting.personal_message_enabled_groups = Group::AUTO_GROUPS[:staff]
-        Group.refresh_automatic_groups!
       end
 
       it "should display group private messages for an admin" do
@@ -350,7 +482,7 @@ RSpec.describe ListController do
       it "should display moderator group private messages for a moderator" do
         moderator = Fabricate(:moderator)
         group = Group.find(Group::AUTO_GROUPS[:moderators])
-        topic = Fabricate(:private_message_topic, allowed_groups: [group])
+        Fabricate(:private_message_topic, allowed_groups: [group])
 
         sign_in(moderator)
 
@@ -366,6 +498,25 @@ RSpec.describe ListController do
 
         expect(response.status).to eq(404)
       end
+
+      it "should sort group private messages by posts_count" do
+        topic2 = Fabricate(:private_message_topic, allowed_groups: [group])
+        topic3 = Fabricate(:private_message_topic, allowed_groups: [group])
+        2.times { Fabricate(:post, topic: topic2) }
+        Fabricate(:post, topic: topic3)
+
+        sign_in(Fabricate(:admin))
+
+        get "/topics/private-messages-group/#{user.username}/#{group.name}.json",
+            params: {
+              order: "posts",
+            }
+
+        expect(response.status).to eq(200)
+        expect(response.parsed_body["topic_list"]["topics"].map { |t| t["id"] }).to eq(
+          [topic2.id, topic3.id, topic.id],
+        )
+      end
     end
 
     describe "with unicode_usernames" do
@@ -373,7 +524,6 @@ RSpec.describe ListController do
         group.add(user)
         sign_in(user)
         SiteSetting.unicode_usernames = false
-        Group.refresh_automatic_groups!
       end
 
       it "should return the right response when user does not belong to group" do
@@ -400,7 +550,6 @@ RSpec.describe ListController do
       before do
         sign_in(user)
         SiteSetting.unicode_usernames = true
-        Group.refresh_automatic_groups!
       end
 
       it "Returns a 200 with unicode group name" do
@@ -756,7 +905,10 @@ RSpec.describe ListController do
     fab!(:topic2) { Fabricate(:topic, user: user) }
     fab!(:user2) { Fabricate(:user) }
 
-    before { sign_in(user2) }
+    before do
+      user.user_stat.update!(post_count: 1)
+      sign_in(user2)
+    end
 
     it "should respond with a list" do
       get "/topics/created-by/#{user.username}.json"
@@ -793,8 +945,8 @@ RSpec.describe ListController do
       end
     end
 
-    context "when `hide_profile_and_presence` is true" do
-      before { user.user_option.update_columns(hide_profile_and_presence: true) }
+    context "when `hide_profile` is true" do
+      before { user.user_option.update_columns(hide_profile: true) }
 
       it "returns 404" do
         get "/topics/created-by/#{user.username}.json"
@@ -826,6 +978,32 @@ RSpec.describe ListController do
       expect(response.status).to eq(200)
       json = response.parsed_body
       expect(json["topic_list"]["topics"].size).to eq(1)
+    end
+
+    it "sorts private messages by activity" do
+      topic_ids = []
+
+      [1.year.ago, 1.week.ago, 1.month.ago].each do |date|
+        pm =
+          Fabricate(
+            :private_message_topic,
+            user: Fabricate(:user),
+            created_at: date,
+            bumped_at: date,
+          )
+        pm.topic_allowed_users.create!(user: user)
+        topic_ids << pm.id
+      end
+
+      sign_in(user)
+
+      get "/topics/private-messages/#{user.username}.json", params: { order: "activity" }
+
+      expect(response.status).to eq(200)
+      json = response.parsed_body
+      expect(json["topic_list"]["topics"].pluck("id")).to eq(
+        [topic_ids[1], topic_ids[2], topic_ids[0]],
+      )
     end
   end
 
@@ -884,7 +1062,7 @@ RSpec.describe ListController do
 
   describe "#private_messages_warnings" do
     fab!(:target_user) { Fabricate(:user) }
-    fab!(:admin) { Fabricate(:admin) }
+    fab!(:admin)
     fab!(:moderator1) { Fabricate(:moderator) }
     fab!(:moderator2) { Fabricate(:moderator) }
 
@@ -974,8 +1152,8 @@ RSpec.describe ListController do
   end
 
   describe "user_topics_feed" do
-    it "returns 404 if `hide_profile_and_presence` user option is checked" do
-      user.user_option.update_columns(hide_profile_and_presence: true)
+    it "returns 404 if `hide_profile` user option is checked" do
+      user.user_option.update_columns(hide_profile: true)
       get "/u/#{user.username}/activity/topics.rss"
       expect(response.status).to eq(404)
     end
@@ -1050,6 +1228,38 @@ RSpec.describe ListController do
         )
       end
     end
+
+    context "when redirect raises an unsafe redirect error" do
+      let(:fake_logger) { FakeLogger.new }
+
+      before do
+        ListController
+          .any_instance
+          .stubs(:redirect_to)
+          .raises(ActionController::Redirecting::UnsafeRedirectError)
+        Rails.logger.broadcast_to(fake_logger)
+      end
+
+      after { Rails.logger.stop_broadcasting_to(fake_logger) }
+
+      it "renders a 404" do
+        get "/c/hello/world/bye/#{subsubcategory.id}"
+        expect(response).to have_http_status :not_found
+      end
+
+      it "doesn’t log an error" do
+        get "/c/hello/world/bye/#{subsubcategory.id}"
+        expect(fake_logger.fatals).to be_empty
+      end
+    end
+
+    context "when provided slug is gibberish" do
+      it "redirects to the proper category" do
+        get "/c/summit'%22()&%25%3Czzz%3E%3CScRiPt%20%3EqlJ2(9585)%3C%2FScRiPt%3E/#{category.id}"
+        expect(response).to have_http_status :moved_permanently
+        expect(response).to redirect_to("/c/#{category.slug}/#{category.id}")
+      end
+    end
   end
 
   describe "shared drafts" do
@@ -1109,12 +1319,10 @@ RSpec.describe ListController do
   describe "#filter" do
     fab!(:category) { Fabricate(:category, slug: "category-slug") }
     fab!(:tag) { Fabricate(:tag, name: "tag1") }
-    fab!(:group) { Fabricate(:group) }
+    fab!(:group)
     fab!(:private_category) { Fabricate(:private_category, group:, slug: "private-category-slug") }
-    fab!(:private_message_topic) { Fabricate(:private_message_topic) }
+    fab!(:private_message_topic)
     fab!(:topic_in_private_category) { Fabricate(:topic, category: private_category) }
-
-    before { SiteSetting.experimental_topics_filter = true }
 
     it "should not return topics that the user is not allowed to view" do
       sign_in(user)
@@ -1128,20 +1336,14 @@ RSpec.describe ListController do
       ).to contain_exactly(topic.id)
     end
 
-    it "should respond with 403 response code for an anonymous user" do
+    it "should not return topics that an anon user is not allowed to view" do
       get "/filter.json"
 
-      expect(response.status).to eq(403)
-    end
+      expect(response.status).to eq(200)
 
-    it "should respond with 404 response code when `experimental_topics_filter` site setting has not been enabled" do
-      SiteSetting.experimental_topics_filter = false
-
-      sign_in(user)
-
-      get "/filter.json"
-
-      expect(response.status).to eq(404)
+      expect(
+        response.parsed_body["topic_list"]["topics"].map { |topic| topic["id"] },
+      ).to contain_exactly(topic.id)
     end
 
     it "returns category definition topics if `show_category_definitions_in_topic_lists` site setting is enabled" do
@@ -1203,6 +1405,24 @@ RSpec.describe ListController do
         expect(parsed["topic_list"]["topics"].length).to eq(1)
         expect(parsed["topic_list"]["topics"].first["id"]).to eq(topic_with_tag.id)
       end
+    end
+
+    it "should filter with tag_group option" do
+      topic_with_tag = Fabricate(:topic, tags: [tag])
+      topic2_with_tag = Fabricate(:topic, tags: [tag])
+      tag_group = Fabricate(:tag_group, tags: [tag])
+
+      sign_in(user)
+
+      get "/filter.json", params: { q: "tag_group:#{tag_group.name}" }
+
+      parsed = response.parsed_body
+      expect(response.status).to eq(200)
+      expect(parsed["topic_list"]["topics"].length).to eq(2)
+      expect(parsed["topic_list"]["topics"].map { |topic| topic["id"] }).to contain_exactly(
+        topic_with_tag.id,
+        topic2_with_tag.id,
+      )
     end
 
     describe "when filtering with the `created-by:<username>` filter" do
@@ -1343,7 +1563,7 @@ RSpec.describe ListController do
     end
 
     describe "when filtering by status" do
-      fab!(:group) { Fabricate(:group) }
+      fab!(:group)
       fab!(:private_category) { Fabricate(:private_category, group: group) }
       fab!(:topic_in_private_category) { Fabricate(:topic, category: private_category) }
 
@@ -1422,56 +1642,30 @@ RSpec.describe ListController do
       response.parsed_body["topic_list"]["topics"].map { |topics| topics["id"] }
     end
 
-    def make_topic_with_unread_replies(topic, user)
-      TopicUser.change(
-        user.id,
-        topic.id,
-        notification_level: TopicUser.notification_levels[:tracking],
-      )
-      TopicUser.update_last_read(user, topic.id, 1, 1, 1)
-      Fabricate(:post, topic: topic)
-      topic
-    end
-
-    def make_topic_read(topic, user)
-      TopicUser.update_last_read(user, topic.id, 1, 1, 1)
-      topic
-    end
-
     context "when the user is part of the `experimental_new_new_view_groups` site setting group" do
-      fab!(:category) { Fabricate(:category) }
-      fab!(:tag) { Fabricate(:tag) }
+      fab!(:category)
+      fab!(:tag)
 
-      fab!(:new_reply) { make_topic_with_unread_replies(Fabricate(:post).topic, user) }
+      fab!(:new_reply) { Fabricate(:new_reply_topic, current_user: user) }
       fab!(:new_topic) { Fabricate(:post).topic }
-      fab!(:old_topic) { make_topic_read(Fabricate(:post).topic, user) }
+      fab!(:old_topic) { Fabricate(:read_topic, current_user: user) }
 
       fab!(:new_reply_in_category) do
-        make_topic_with_unread_replies(
-          Fabricate(:post, topic: Fabricate(:topic, category: category)).topic,
-          user,
-        )
+        Fabricate(:new_reply_topic, category: category, current_user: user)
       end
       fab!(:new_topic_in_category) do
         Fabricate(:post, topic: Fabricate(:topic, category: category)).topic
       end
       fab!(:old_topic_in_category) do
-        make_topic_read(Fabricate(:post, topic: Fabricate(:topic, category: category)).topic, user)
+        Fabricate(:read_topic, category: category, current_user: user)
       end
 
-      fab!(:new_reply_with_tag) do
-        make_topic_with_unread_replies(
-          Fabricate(:post, topic: Fabricate(:topic, tags: [tag])).topic,
-          user,
-        )
-      end
+      fab!(:new_reply_with_tag) { Fabricate(:new_reply_topic, tags: [tag], current_user: user) }
       fab!(:new_topic_with_tag) { Fabricate(:post, topic: Fabricate(:topic, tags: [tag])).topic }
-      fab!(:old_topic_with_tag) do
-        make_topic_read(Fabricate(:post, topic: Fabricate(:topic, tags: [tag])).topic, user)
-      end
+      fab!(:old_topic_with_tag) { Fabricate(:read_topic, tags: [tag], current_user: user) }
 
       before do
-        make_topic_read(topic, user)
+        TopicUser.update_last_read(user, topic.id, 1, 1, 1)
 
         SiteSetting.experimental_new_new_view_groups = group.name
         group.add(user)

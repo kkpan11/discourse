@@ -3,12 +3,15 @@
 RSpec.describe "Chat message - thread", type: :system do
   fab!(:current_user) { Fabricate(:user) }
   fab!(:channel_1) { Fabricate(:chat_channel, threading_enabled: true) }
+  fab!(:thread_original_message) { Fabricate(:chat_message_with_service, chat_channel: channel_1) }
   fab!(:thread_message_1) do
-    message_1 = Fabricate(:chat_message, chat_channel: channel_1, use_service: true)
-    Fabricate(:chat_message, in_reply_to: message_1, use_service: true)
+    Fabricate(
+      :chat_message_with_service,
+      chat_channel: channel_1,
+      in_reply_to: thread_original_message,
+    )
   end
 
-  let(:cdp) { PageObjects::CDP.new }
   let(:chat_page) { PageObjects::Pages::Chat.new }
   let(:thread_page) { PageObjects::Pages::ChatThread.new }
 
@@ -31,6 +34,8 @@ RSpec.describe "Chat message - thread", type: :system do
   end
 
   context "when copying text of a message" do
+    let(:cdp) { PageObjects::CDP.new }
+
     before { cdp.allow_clipboard }
 
     it "[mobile] copies the text of a single message", mobile: true do
@@ -38,7 +43,7 @@ RSpec.describe "Chat message - thread", type: :system do
 
       thread_page.messages.copy_text(thread_message_1)
 
-      expect(cdp.read_clipboard.chomp).to eq(thread_message_1.message)
+      cdp.clipboard_has_text?(thread_message_1.message)
       expect(PageObjects::Components::Toasts.new).to have_success(I18n.t("js.chat.text_copied"))
     end
   end
@@ -53,8 +58,9 @@ RSpec.describe "Chat message - thread", type: :system do
 
       thread_page.messages.copy_link(thread_message_1)
 
-      expect(cdp.read_clipboard).to include(
+      cdp.clipboard_has_text?(
         "/chat/c/-/#{channel_1.id}/t/#{thread_message_1.thread.id}/#{thread_message_1.id}",
+        strict: false,
       )
       expect(PageObjects::Components::Toasts.new).to have_success(I18n.t("js.chat.link_copied"))
     end
@@ -64,8 +70,9 @@ RSpec.describe "Chat message - thread", type: :system do
 
       thread_page.messages.copy_link(thread_message_1)
 
-      expect(cdp.read_clipboard).to include(
+      cdp.clipboard_has_text?(
         "/chat/c/-/#{channel_1.id}/t/#{thread_message_1.thread.id}/#{thread_message_1.id}",
+        strict: false,
       )
       expect(PageObjects::Components::Toasts.new).to have_success(I18n.t("js.chat.link_copied"))
     end

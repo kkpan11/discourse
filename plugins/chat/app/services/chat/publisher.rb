@@ -15,7 +15,7 @@ module Chat
     end
 
     def self.calculate_publish_targets(channel, message)
-      return [root_message_bus_channel(channel.id)] if !allow_publish_to_thread?(channel)
+      return [root_message_bus_channel(channel.id)] if !allow_publish_to_thread?(channel, message)
 
       if message.thread_om?
         [
@@ -30,8 +30,8 @@ module Chat
       end
     end
 
-    def self.allow_publish_to_thread?(channel)
-      channel.threading_enabled
+    def self.allow_publish_to_thread?(channel, message)
+      channel.threading_enabled || message.thread&.force
     end
 
     def self.publish_new!(chat_channel, chat_message, staged_id)
@@ -42,7 +42,7 @@ module Chat
         serialize_message_with_type(chat_message, :sent).merge(staged_id: staged_id),
       )
 
-      if !chat_message.thread_reply? || !allow_publish_to_thread?(chat_channel)
+      if !chat_message.thread_reply? || !allow_publish_to_thread?(chat_channel, chat_message)
         MessageBus.publish(
           self.new_messages_message_bus_channel(chat_channel.id),
           {
@@ -55,16 +55,18 @@ module Chat
                 { scope: anonymous_guardian, root: false },
               ).as_json,
           },
+          permissions(chat_channel),
         )
       end
 
-      if chat_message.thread_reply? && allow_publish_to_thread?(chat_channel)
+      if chat_message.thread_reply? && allow_publish_to_thread?(chat_channel, chat_message)
         MessageBus.publish(
           self.new_messages_message_bus_channel(chat_channel.id),
           {
             type: "thread",
             channel_id: chat_channel.id,
             thread_id: chat_message.thread_id,
+            force_thread: chat_message.thread&.force,
             message:
               Chat::MessageSerializer.new(
                 chat_message,
@@ -90,6 +92,8 @@ module Chat
         {
           type: :update_thread_original_message,
           original_message_id: thread.original_message_id,
+          thread_id: thread.id,
+          channel_id: thread.channel.id,
           preview: preview.as_json,
         },
       )
@@ -108,7 +112,7 @@ module Chat
       publish_to_targets!(
         message_bus_targets,
         chat_channel,
-        { type: :processed, chat_message: { id: chat_message.id, cooked: chat_message.cooked } },
+        serialize_message_with_type(chat_message, :processed),
       )
     end
 
@@ -318,8 +322,10 @@ module Chat
       tracking_data =
         Chat::TrackingState.call(
           guardian: Guardian.new(user),
-          channel_ids: channel_last_read_map.keys,
-          include_missing_memberships: true,
+          params: {
+            channel_ids: channel_last_read_map.keys,
+            include_missing_memberships: true,
+          },
         )
       if tracking_data.failure?
         raise StandardError,
@@ -355,10 +361,10 @@ module Chat
 
     NEW_CHANNEL_MESSAGE_BUS_CHANNEL = "/chat/new-channel"
 
-    def self.publish_new_channel(chat_channel, users)
+    def self.publish_new_channel(chat_channel, user_ids)
       Chat::UserChatChannelMembership
         .includes(:user)
-        .where(chat_channel: chat_channel, user: users)
+        .where(chat_channel: chat_channel, user_id: user_ids)
         .find_in_batches do |memberships|
           memberships.each do |membership|
             serialized_channel =
@@ -463,8 +469,11 @@ module Chat
 
     private
 
-    def self.permissions(chat_channel)
-      { user_ids: chat_channel.allowed_user_ids, group_ids: chat_channel.allowed_group_ids }
+    def self.permissions(channel)
+      {
+        user_ids: channel.allowed_user_ids.presence,
+        group_ids: channel.allowed_group_ids.presence,
+      }.compact
     end
 
     def self.anonymous_guardian

@@ -10,14 +10,14 @@
     {{else if b.icon}}
       {{d-icon b.icon}}
     {{else}}
-      {{d-icon "sign-in-alt"}}
+      {{d-icon "right-to-bracket"}}
     {{/if}}
-    {{b.title}}
+    <span class="btn-social-title">{{b.title}}</span>
   </button>
 {{/each}}
 
-{{#if this.canUsePasskeys}}
-  <PasskeyLoginButton />
+{{#if this.showPasskeysButton}}
+  <PasskeyLoginButton @passkeyLogin={{this.passkeyLogin}} />
 {{/if}}
 
 <PluginOutlet @name="after-login-buttons" />

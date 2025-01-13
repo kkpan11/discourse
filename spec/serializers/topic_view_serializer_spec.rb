@@ -1,20 +1,19 @@
 # frozen_string_literal: true
 
 RSpec.describe TopicViewSerializer do
-  def serialize_topic(topic, user_arg)
-    topic_view = TopicView.new(topic.id, user_arg)
+  def serialize_topic(topic, user_arg, opts = {})
+    topic_view = TopicView.new(topic.id, user_arg, opts)
+
     serializer =
       TopicViewSerializer.new(topic_view, scope: Guardian.new(user_arg), root: false).as_json
+
     JSON.parse(MultiJson.dump(serializer)).deep_symbolize_keys!
   end
 
-  # Ensure no suggested ids are cached cause that can muck up suggested
-  use_redis_snapshotting
-
-  fab!(:topic) { Fabricate(:topic) }
-  fab!(:user) { Fabricate(:user) }
+  fab!(:topic)
+  fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
   fab!(:user_2) { Fabricate(:user) }
-  fab!(:admin) { Fabricate(:admin) }
+  fab!(:admin)
 
   describe "#featured_link and #featured_link_root_domain" do
     fab!(:featured_link) { "http://meta.discourse.org" }
@@ -95,38 +94,26 @@ RSpec.describe TopicViewSerializer do
   end
 
   describe "#suggested_topics" do
-    before { Group.refresh_automatic_groups! }
-
     fab!(:topic2) { Fabricate(:topic) }
 
     before { TopicUser.update_last_read(user, topic2.id, 0, 0, 0) }
 
-    describe "when loading last chunk" do
-      it "should include suggested topics" do
-        json = serialize_topic(topic, user)
+    it "should include suggested topics if `TopicView#include_suggested` is set to `true`" do
+      json = serialize_topic(topic, user, include_suggested: true)
 
-        expect(json[:suggested_topics].first[:id]).to eq(topic2.id)
-      end
+      expect(json[:suggested_topics].first[:id]).to eq(topic2.id)
     end
 
-    describe "when not loading last chunk" do
-      fab!(:post) { Fabricate(:post, topic: topic) }
-      fab!(:post2) { Fabricate(:post, topic: topic) }
+    it "should not include suggested topics if `TopicView#include_suggested` is set to `false`" do
+      post = Fabricate(:post, topic:)
+      post2 = Fabricate(:post, topic:)
 
-      it "should not include suggested topics" do
-        post
-        post2
-        topic_view = TopicView.new(topic.id, user, post_ids: [post.id])
-        topic_view.next_page
-        json = described_class.new(topic_view, scope: Guardian.new(user), root: false).as_json
+      json = serialize_topic(topic, user, include_suggested: false)
 
-        expect(json[:suggested_topics]).to eq(nil)
-      end
+      expect(json[:suggested_topics]).to eq(nil)
     end
 
     describe "with private messages" do
-      before { Group.refresh_automatic_groups! }
-
       fab!(:topic) do
         Fabricate(
           :private_message_topic,
@@ -165,9 +152,7 @@ RSpec.describe TopicViewSerializer do
 
   describe "#suggested_group_name" do
     fab!(:pm) { Fabricate(:private_message_post).topic }
-    fab!(:group) { Fabricate(:group) }
-
-    before { Group.refresh_automatic_groups! }
+    fab!(:group)
 
     it "is nil for a regular topic" do
       json = serialize_topic(topic, user)
@@ -194,8 +179,8 @@ RSpec.describe TopicViewSerializer do
   end
 
   describe "when tags added to private message topics" do
-    fab!(:moderator) { Fabricate(:moderator) }
-    fab!(:tag) { Fabricate(:tag) }
+    fab!(:moderator)
+    fab!(:tag)
     fab!(:pm) do
       Fabricate(
         :private_message_topic,
@@ -207,7 +192,7 @@ RSpec.describe TopicViewSerializer do
       )
     end
 
-    fab!(:group) { Fabricate(:group) }
+    fab!(:group)
     fab!(:pm_between_reg_users) do
       Fabricate(
         :private_message_topic,
@@ -329,11 +314,13 @@ RSpec.describe TopicViewSerializer do
   context "with flags" do
     fab!(:post) { Fabricate(:post, topic: topic) }
     fab!(:other_post) { Fabricate(:post, topic: topic) }
+    fab!(:flagger_1) { Fabricate(:user, refresh_auto_groups: true) }
+    fab!(:flagger_2) { Fabricate(:user, refresh_auto_groups: true) }
 
     it "will return reviewable counts on posts" do
-      r = PostActionCreator.inappropriate(Fabricate(:user), post).reviewable
+      r = PostActionCreator.inappropriate(flagger_1, post).reviewable
       r.perform(admin, :agree_and_keep)
-      PostActionCreator.spam(Fabricate(:user), post)
+      PostActionCreator.spam(flagger_2, post)
 
       json = serialize_topic(topic, admin)
       p0 = json[:post_stream][:posts][0]
@@ -445,7 +432,7 @@ RSpec.describe TopicViewSerializer do
     context "with can_edit_tags" do
       before do
         SiteSetting.tagging_enabled = true
-        SiteSetting.min_trust_to_edit_wiki_post = 2
+        SiteSetting.edit_wiki_post_allowed_groups = Group::AUTO_GROUPS[:trust_level_2]
       end
 
       it "returns true when user can edit a wiki topic" do
@@ -455,16 +442,19 @@ RSpec.describe TopicViewSerializer do
         json = serialize_topic(topic, user)
         expect(json[:details][:can_edit_tags]).to be_nil
 
-        user.update!(trust_level: 2)
+        user.change_trust_level!(TrustLevel[2])
 
-        json = serialize_topic(topic, user)
+        json = serialize_topic(topic, user.reload)
         expect(json[:details][:can_edit_tags]).to eq(true)
       end
     end
 
     context "with can_edit" do
-      fab!(:group_user) { Fabricate(:group_user) }
-      fab!(:category) { Fabricate(:category, reviewable_by_group: group_user.group) }
+      fab!(:group_user)
+      fab!(:category)
+      fab!(:category_moderation_group) do
+        Fabricate(:category_moderation_group, category:, group: group_user.group)
+      end
       fab!(:topic) { Fabricate(:topic, category: category) }
       let(:user) { group_user.user }
 
@@ -584,7 +574,7 @@ RSpec.describe TopicViewSerializer do
 
   describe "#requested_group_name" do
     fab!(:pm) { Fabricate(:private_message_post).topic }
-    fab!(:group) { Fabricate(:group) }
+    fab!(:group)
 
     it "should return the right group name when PM is a group membership request" do
       pm.custom_fields[:requested_group_id] = group.id

@@ -1,24 +1,34 @@
 import EmberObject, { action, computed } from "@ember/object";
 import { alias, and, or, reads } from "@ember/object/computed";
 import { cancel, scheduleOnce } from "@ember/runloop";
-import Service, { inject as service } from "@ember/service";
+import Service, { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
 import { isEmpty } from "@ember/utils";
 import { observes, on } from "@ember-decorators/object";
+import $ from "jquery";
 import { Promise } from "rsvp";
 import DiscardDraftModal from "discourse/components/modal/discard-draft";
 import PostEnqueuedModal from "discourse/components/modal/post-enqueued";
+import SpreadsheetEditor from "discourse/components/modal/spreadsheet-editor";
 import { categoryBadgeHTML } from "discourse/helpers/category-link";
 import {
   cannotPostAgain,
   durationTextFromSeconds,
 } from "discourse/helpers/slow-mode";
 import { customPopupMenuOptions } from "discourse/lib/composer/custom-popup-menu-options";
+import discourseDebounce from "discourse/lib/debounce";
+import discourseComputed from "discourse/lib/decorators";
+import deprecated from "discourse/lib/deprecated";
+import { isTesting } from "discourse/lib/environment";
 import prepareFormTemplateData, {
   getFormTemplateObject,
 } from "discourse/lib/form-template-validation";
 import { shortDate } from "discourse/lib/formatter";
+import { getOwnerWithFallback } from "discourse/lib/get-owner";
+import getURL from "discourse/lib/get-url";
+import { iconHTML } from "discourse/lib/icon-library";
 import { disableImplicitInjections } from "discourse/lib/implicit-injections";
+import { wantsNewWindow } from "discourse/lib/intercept-click";
 import { buildQuote } from "discourse/lib/quote";
 import renderTags from "discourse/lib/render-tags";
 import { emojiUnescape } from "discourse/lib/text";
@@ -27,7 +37,8 @@ import {
   uploadIcon,
 } from "discourse/lib/uploads";
 import DiscourseURL from "discourse/lib/url";
-import { escapeExpression, modKeysPressed } from "discourse/lib/utilities";
+import { escapeExpression } from "discourse/lib/utilities";
+import Category from "discourse/models/category";
 import Composer, {
   CREATE_TOPIC,
   NEW_TOPIC_KEY,
@@ -35,14 +46,7 @@ import Composer, {
   SAVE_LABELS,
 } from "discourse/models/composer";
 import Draft from "discourse/models/draft";
-import { isTesting } from "discourse-common/config/environment";
-import discourseDebounce from "discourse-common/lib/debounce";
-import deprecated from "discourse-common/lib/deprecated";
-import { getOwnerWithFallback } from "discourse-common/lib/get-owner";
-import getURL from "discourse-common/lib/get-url";
-import { iconHTML } from "discourse-common/lib/icon-library";
-import discourseComputed from "discourse-common/utils/decorators";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 async function loadDraft(store, opts = {}) {
   let { draft, draftKey, draftSequence } = opts;
@@ -51,13 +55,9 @@ async function loadDraft(store, opts = {}) {
     if (draft && typeof draft === "string") {
       draft = JSON.parse(draft);
     }
-  } catch (error) {
+  } catch {
     draft = null;
     Draft.clear(draftKey, draftSequence);
-  }
-
-  if (!draft?.title && !draft?.reply) {
-    return;
   }
 
   let attrs = {
@@ -117,6 +117,8 @@ export default class ComposerService extends Service {
   lastValidatedAt = null;
   isUploading = false;
   isProcessingUpload = false;
+  isCancellable;
+  uploadProgress;
   topic = null;
   linkLookup = null;
   showPreview = true;
@@ -133,6 +135,10 @@ export default class ComposerService extends Service {
 
   get topicController() {
     return getOwnerWithFallback(this).lookup("controller:topic");
+  }
+
+  get isOpen() {
+    return this.model?.composeState === Composer.OPEN;
   }
 
   @on("init")
@@ -159,7 +165,7 @@ export default class ComposerService extends Service {
   }
 
   set disableSubmit(value) {
-    return this.set("_disableSubmit", value);
+    this.set("_disableSubmit", value);
   }
 
   @computed("model.category", "skipFormTemplate")
@@ -171,7 +177,7 @@ export default class ComposerService extends Service {
       return null;
     }
 
-    return this.model.category?.get("form_template_ids");
+    return this.model?.category?.get("form_template_ids");
   }
 
   get hasFormTemplate() {
@@ -187,7 +193,7 @@ export default class ComposerService extends Service {
   }
 
   set formTemplateInitialValues(values) {
-    return this.set("_formTemplateInitialValues", values);
+    this.set("_formTemplateInitialValues", values);
   }
 
   @action
@@ -198,13 +204,13 @@ export default class ComposerService extends Service {
   @discourseComputed("showPreview")
   toggleText(showPreview) {
     return showPreview
-      ? I18n.t("composer.hide_preview")
-      : I18n.t("composer.show_preview");
+      ? i18n("composer.hide_preview")
+      : i18n("composer.show_preview");
   }
 
   @observes("showPreview")
   showPreviewChanged() {
-    if (!this.site.mobileView) {
+    if (this.site.desktopView) {
       this.keyValueStore.set({
         key: "composer.showPreview",
         value: this.showPreview,
@@ -264,7 +270,6 @@ export default class ComposerService extends Service {
       key: "toolbar-enabled",
       value: val ? "true" : "false",
     });
-    return val;
   }
 
   @discourseComputed("model.canEditTitle", "model.creatingPrivateMessage")
@@ -382,6 +387,7 @@ export default class ComposerService extends Service {
 
       options.push(
         this._setupPopupMenuOption({
+          name: "toggle-invisible",
           action: "toggleInvisible",
           icon: "far-eye-slash",
           label: "composer.toggle_unlisted",
@@ -392,6 +398,7 @@ export default class ComposerService extends Service {
       if (this.capabilities.touch) {
         options.push(
           this._setupPopupMenuOption({
+            name: "format-code",
             action: "applyFormatCode",
             icon: "code",
             label: "composer.code_title",
@@ -400,6 +407,7 @@ export default class ComposerService extends Service {
 
         options.push(
           this._setupPopupMenuOption({
+            name: "apply-unordered-list",
             action: "applyUnorderedList",
             icon: "list-ul",
             label: "composer.ulist_title",
@@ -408,6 +416,7 @@ export default class ComposerService extends Service {
 
         options.push(
           this._setupPopupMenuOption({
+            name: "apply-ordered-list",
             action: "applyOrderedList",
             icon: "list-ol",
             label: "composer.olist_title",
@@ -417,6 +426,7 @@ export default class ComposerService extends Service {
 
       options.push(
         this._setupPopupMenuOption({
+          name: "toggle-whisper",
           action: "toggleWhisper",
           icon: "far-eye-slash",
           label: "composer.toggle_whisper",
@@ -424,9 +434,18 @@ export default class ComposerService extends Service {
         })
       );
 
+      options.push(
+        this._setupPopupMenuOption({
+          name: "toggle-spreadsheet",
+          action: "toggleSpreadsheet",
+          icon: "table",
+          label: "composer.insert_table",
+        })
+      );
+
       return options.concat(
         customPopupMenuOptions
-          .map((option) => this._setupPopupMenuOption(option))
+          .map((option) => this._setupPopupMenuOption({ ...option }))
           .filter((o) => o)
       );
     }
@@ -474,6 +493,45 @@ export default class ComposerService extends Service {
     return uploadIcon(this.currentUser.staff, this.siteSettings);
   }
 
+  @discourseComputed(
+    "model.action",
+    "isWhispering",
+    "model.privateMessage",
+    "model.post.username"
+  )
+  ariaLabel(modelAction, isWhispering, privateMessage, postUsername) {
+    switch (modelAction) {
+      case "createSharedDraft":
+        return i18n("composer.create_shared_draft");
+      case "editSharedDraft":
+        return i18n("composer.edit_shared_draft");
+      case "createTopic":
+        return i18n("composer.composer_actions.create_topic.label");
+      case "privateMessage":
+        return i18n("user.new_private_message");
+      case "edit":
+        return i18n("composer.composer_actions.edit");
+      case "reply":
+        if (isWhispering) {
+          return `${i18n("composer.create_whisper")} ${this.site.get(
+            "whispers_allowed_groups_names"
+          )}`;
+        }
+        if (privateMessage) {
+          return i18n("composer.create_pm");
+        }
+        if (postUsername) {
+          return i18n("composer.composer_actions.reply_to_post.label", {
+            postUsername,
+          });
+        } else {
+          return i18n("composer.composer_actions.reply_to_topic.label");
+        }
+      default:
+        return i18n("keyboard_shortcuts_help.composing.title");
+    }
+  }
+
   // Use this to open the composer when you are not sure whether it is
   // already open and whether it already has a draft being worked on. Supports
   // options to append text once the composer is open if required.
@@ -491,7 +549,13 @@ export default class ComposerService extends Service {
   @action
   async focusComposer(opts = {}) {
     await this._openComposerForFocus(opts);
-    this._focusAndInsertText(opts.insertText);
+
+    scheduleOnce(
+      "afterRender",
+      this,
+      this._focusAndInsertText,
+      opts.insertText
+    );
   }
 
   async _openComposerForFocus(opts) {
@@ -524,13 +588,11 @@ export default class ComposerService extends Service {
   }
 
   _focusAndInsertText(insertText) {
-    scheduleOnce("afterRender", () => {
-      document.querySelector("textarea.d-editor-input")?.focus();
+    document.querySelector("textarea.d-editor-input")?.focus();
 
-      if (insertText) {
-        this.model.appendText(insertText, null, { new_line: true });
-      }
-    });
+    if (insertText) {
+      this.model.appendText(insertText, null, { new_line: true });
+    }
   }
 
   @action
@@ -575,7 +637,7 @@ export default class ComposerService extends Service {
   @action
   cancelUpload(event) {
     event?.preventDefault();
-    this.set("model.uploadCancelled", true);
+    this.appEvents.trigger("composer:cancel-upload");
   }
 
   @action
@@ -586,10 +648,11 @@ export default class ComposerService extends Service {
 
   @action
   viewNewReply(event) {
-    if (event && modKeysPressed(event).length > 0) {
-      return false;
+    if (wantsNewWindow(event)) {
+      return;
     }
-    event?.preventDefault();
+
+    event.preventDefault();
     DiscourseURL.routeTo(this.get("model.createdPost.url"));
     this.close();
   }
@@ -600,13 +663,24 @@ export default class ComposerService extends Service {
   }
 
   @action
-  onPopupMenuAction(menuAction) {
-    if (typeof menuAction === "function") {
-      return menuAction(this.toolbarEvent);
+  onPopupMenuAction(menuItem, toolbarEvent) {
+    // menuItem is an object with keys name & action like so: { name: "toggle-invisible, action: "toggleInvisible" }
+    // `action` value can either be a string (to lookup action by) or a function to call
+    this.appEvents.trigger(
+      "composer:toolbar-popup-menu-button-clicked",
+      menuItem
+    );
+    if (typeof menuItem.action === "function") {
+      // note due to the way args are passed to actions we need
+      // to treate the explicity toolbarEvent as a fallback for no
+      // event
+      // Long term we want to avoid needing this awkwardness and pass
+      // the event explicitly
+      return menuItem.action(this.toolbarEvent || toolbarEvent);
     } else {
       return (
-        this.actions?.[menuAction]?.bind(this) || // Legacy-style contributions from themes/plugins
-        this[menuAction]
+        this.actions?.[menuItem.action]?.bind(this) || // Legacy-style contributions from themes/plugins
+        this[menuItem.action]
       )();
     }
   }
@@ -633,7 +707,7 @@ export default class ComposerService extends Service {
   }
 
   @action
-  afterRefresh($preview) {
+  afterRefresh(preview) {
     const topic = this.get("model.topic");
     const linkLookup = this.linkLookup;
 
@@ -647,13 +721,12 @@ export default class ComposerService extends Service {
     }
 
     const post = this.get("model.post");
-    const $links = $("a[href]", $preview);
-    $links.each((idx, l) => {
+    preview.querySelectorAll("a[href]").forEach((l) => {
       const href = l.href;
       if (href && href.length) {
         // skip links added by watched words
         if (l.dataset.word !== undefined) {
-          return true;
+          return;
         }
 
         // skip links in quotes and oneboxes
@@ -669,7 +742,7 @@ export default class ComposerService extends Service {
             element.tagName === "ASIDE" &&
             element.classList.contains("quote")
           ) {
-            return true;
+            return;
           }
 
           if (
@@ -677,7 +750,7 @@ export default class ComposerService extends Service {
             element.classList.contains("onebox") &&
             href !== element.dataset["onebox-src"]
           ) {
-            return true;
+            return;
           }
         }
 
@@ -688,7 +761,7 @@ export default class ComposerService extends Service {
             this.appEvents.trigger("composer-messages:create", {
               extraClass: "custom-body",
               templateName: "education",
-              body: I18n.t("composer.duplicate_link_same_user", {
+              body: i18n("composer.duplicate_link_same_user", {
                 domain: linkInfo.domain,
                 post_url: topic.urlForPostNumber(linkInfo.post_number),
                 ago: shortDate(linkInfo.posted_at),
@@ -698,7 +771,7 @@ export default class ComposerService extends Service {
             this.appEvents.trigger("composer-messages:create", {
               extraClass: "custom-body duplicate-link-message",
               templateName: "education",
-              body: I18n.t("composer.duplicate_link", {
+              body: i18n("composer.duplicate_link", {
                 domain: linkInfo.domain,
                 username: linkInfo.username,
                 post_url: topic.urlForPostNumber(linkInfo.post_number),
@@ -706,17 +779,24 @@ export default class ComposerService extends Service {
               }),
             });
           }
-
-          return false;
         }
       }
-      return true;
     });
   }
 
   @action
   toggleWhisper() {
     this.toggleProperty("model.whisper");
+  }
+
+  @action
+  toggleSpreadsheet() {
+    this.modal.show(SpreadsheetEditor, {
+      model: {
+        toolbarEvent: this.toolbarEvent,
+        tableTokens: null,
+      },
+    });
   }
 
   @action
@@ -848,13 +928,18 @@ export default class ComposerService extends Service {
     const groupLink = getURL(`/g/${name}/members`);
 
     if (userCount > maxMentions) {
-      body = I18n.t("composer.group_mentioned_limit", {
+      body = i18n("composer.group_mentioned_limit", {
         group: `@${name}`,
         count: maxMentions,
         group_link: groupLink,
       });
     } else if (userCount > 0) {
-      body = I18n.t("composer.group_mentioned", {
+      // Louder warning for a larger group.
+      const translationKey =
+        userCount >= 5
+          ? "composer.larger_group_mentioned"
+          : "composer.group_mentioned";
+      body = i18n(translationKey, {
         group: `@${name}`,
         count: userCount,
         group_link: groupLink,
@@ -876,12 +961,12 @@ export default class ComposerService extends Service {
 
     let body;
     if (isGroup) {
-      body = I18n.t(`composer.cannot_see_group_mention.${reason}`, {
+      body = i18n(`composer.cannot_see_group_mention.${reason}`, {
         group: name,
         count: notifiedCount,
       });
     } else {
-      body = I18n.t(`composer.cannot_see_mention.${reason}`, {
+      body = i18n(`composer.cannot_see_mention.${reason}`, {
         username: name,
       });
     }
@@ -898,7 +983,7 @@ export default class ComposerService extends Service {
     this.appEvents.trigger("composer-messages:create", {
       extraClass: "custom-body",
       templateName: "education",
-      body: I18n.t("composer.here_mention", {
+      body: i18n("composer.here_mention", {
         here: this.siteSettings.here_mention,
         count,
       }),
@@ -979,7 +1064,7 @@ export default class ComposerService extends Service {
           "seconds"
         );
         const timeLeft = moment().diff(canPostAt, "seconds");
-        const message = I18n.t("composer.slow_mode.error", {
+        const message = i18n("composer.slow_mode.error", {
           timeLeft: durationTextFromSeconds(timeLeft),
         });
 
@@ -995,7 +1080,7 @@ export default class ComposerService extends Service {
 
     // for now handle a very narrow use case
     // if we are replying to a topic
-    // AND are on on a different topic
+    // AND are on a different topic
     // AND topic is open (or we are staff)
     // --> pop the window up
     if (!force && composer.replyingToTopic) {
@@ -1044,7 +1129,7 @@ export default class ComposerService extends Service {
         (this.isStaffUser || !currentTopic.closed)
       ) {
         this.dialog.alert({
-          title: I18n.t("composer.posting_not_on_topic"),
+          title: i18n("composer.posting_not_on_topic"),
           buttons: [
             {
               label: topicLabelContent(originalTopic),
@@ -1060,7 +1145,7 @@ export default class ComposerService extends Service {
               },
             },
             {
-              label: I18n.t("composer.cancel"),
+              label: i18n("composer.cancel"),
               class: "btn-flat btn-text btn-reply-where__cancel",
             },
           ],
@@ -1221,6 +1306,7 @@ export default class ComposerService extends Service {
    @param {Boolean} [opts.disableScopedCategory]
    @param {Number} [opts.categoryId] Sets `scopedCategoryId` and `categoryId` on the Composer model
    @param {Number} [opts.prioritizedCategoryId]
+   @param {Number} [opts.formTemplateId]
    @param {String} [opts.draftSequence]
    @param {Boolean} [opts.skipDraftCheck]
    @param {Boolean} [opts.skipJumpOnSave] Option to skip navigating to the post when saved in this composer session
@@ -1255,17 +1341,14 @@ export default class ComposerService extends Service {
 
     // Scope the categories drop down to the category we opened the composer with.
     if (opts.categoryId && !opts.disableScopedCategory) {
-      const category = this.site.categories.findBy("id", opts.categoryId);
+      const category = Category.findById(opts.categoryId);
       if (category) {
         this.set("scopedCategoryId", opts.categoryId);
       }
     }
 
     if (opts.prioritizedCategoryId) {
-      const category = this.site.categories.findBy(
-        "id",
-        opts.prioritizedCategoryId
-      );
+      const category = Category.findById(opts.prioritizedCategoryId);
 
       if (category) {
         this.set("prioritizedCategoryId", opts.prioritizedCategoryId);
@@ -1299,6 +1382,13 @@ export default class ComposerService extends Service {
           composerModel.draftKey === opts.draftKey
         ) {
           composerModel.set("composeState", Composer.OPEN);
+
+          // reset height set from collapse() state
+          document.documentElement.style.setProperty(
+            "--composer-height",
+            this.get("model.composerHeight")
+          );
+
           if (!opts.action) {
             return;
           }
@@ -1327,8 +1417,11 @@ export default class ComposerService extends Service {
         opts.draftSequence = data.draft_sequence;
 
         await this._setModel(composerModel, opts);
+
         return;
       }
+
+      await this._setModel(composerModel, opts);
 
       // otherwise, do the draft check async
       if (!opts.draft && !opts.skipDraftCheck) {
@@ -1341,10 +1434,9 @@ export default class ComposerService extends Service {
           await this.open(opts);
         }
       }
-
-      await this._setModel(composerModel, opts);
     } finally {
       this.skipAutoSave = false;
+      this.appEvents.trigger("composer:open", { model: this.model });
     }
   }
 
@@ -1373,6 +1465,7 @@ export default class ComposerService extends Service {
     body,
     category,
     tags,
+    formTemplate,
     preferDraft = false,
   } = {}) {
     if (preferDraft && this.currentUser.has_topic_draft) {
@@ -1381,6 +1474,7 @@ export default class ComposerService extends Service {
       return this.open({
         prioritizedCategoryId: category?.id,
         topicCategoryId: category?.id,
+        formTemplateId: formTemplate?.id,
         topicTitle: title,
         topicBody: body,
         topicTags: tags,
@@ -1450,10 +1544,6 @@ export default class ComposerService extends Service {
       this.model.set("title", opts.topicTitle);
     }
 
-    if (opts.topicCategoryId) {
-      this.model.set("categoryId", opts.topicCategoryId);
-    }
-
     if (opts.topicTags && this.site.can_tag_topics) {
       let tags = escapeExpression(opts.topicTags)
         .split(",")
@@ -1469,6 +1559,15 @@ export default class ComposerService extends Service {
 
     if (opts.topicBody) {
       this.model.set("reply", opts.topicBody);
+    }
+
+    if (
+      opts.formTemplateId &&
+      this.model
+        .get("category.form_template_ids")
+        ?.includes(opts.formTemplateId)
+    ) {
+      this.model.set("formTemplateId", opts.formTemplateId);
     }
 
     if (opts.prependText && !this.model.reply?.includes(opts.prependText)) {
@@ -1491,9 +1590,9 @@ export default class ComposerService extends Service {
       return this.keyValueStore.getItem("composerHeight");
     }
 
-    // The two custom properties below can be overriden by themes/plugins to set different default composer heights.
+    // The two custom properties below can be overridden by themes/plugins to set different default composer heights.
     if (this.model.action === "reply") {
-      return "var(--reply-composer-height, 300px)";
+      return "var(--reply-composer-height, 255px)";
     } else {
       return "var(--new-topic-composer-height, 400px)";
     }
@@ -1538,12 +1637,12 @@ export default class ComposerService extends Service {
 
     return new Promise((resolve) => {
       this.dialog.alert({
-        message: I18n.t("drafts.abandon.confirm"),
+        message: i18n("drafts.abandon.confirm"),
         buttons: [
           {
-            label: I18n.t("drafts.abandon.yes_value"),
+            label: i18n("drafts.abandon.yes_value"),
             class: "btn-danger",
-            icon: "far-trash-alt",
+            icon: "trash-can",
             action: () => {
               this.destroyDraft(data.draft_sequence).finally(() => {
                 data.draft = null;
@@ -1552,7 +1651,7 @@ export default class ComposerService extends Service {
             },
           },
           {
-            label: I18n.t("drafts.abandon.no_value"),
+            label: i18n("drafts.abandon.no_value"),
             class: "btn-resume-editing",
             action: () => resolve(data),
           },
@@ -1613,6 +1712,14 @@ export default class ComposerService extends Service {
     }).finally(() => {
       this.skipAutoSave = false;
     });
+  }
+
+  unshrink() {
+    this.model.set("composeState", Composer.OPEN);
+    document.documentElement.style.setProperty(
+      "--composer-height",
+      this.model.composerHeight
+    );
   }
 
   shrink() {
@@ -1682,7 +1789,7 @@ export default class ComposerService extends Service {
     if (!this.siteSettings.allow_uncategorized_topics && !categoryId) {
       return EmberObject.create({
         failed: true,
-        reason: I18n.t("composer.error.category_missing"),
+        reason: i18n("composer.error.category_missing"),
         lastShownAt: lastValidatedAt,
       });
     }
@@ -1696,7 +1803,7 @@ export default class ComposerService extends Service {
       if (category.minimumRequiredTags > tagsArray.length) {
         return EmberObject.create({
           failed: true,
-          reason: I18n.t("composer.error.tags_missing", {
+          reason: i18n("composer.error.tags_missing", {
             count: category.minimumRequiredTags,
           }),
           lastShownAt: lastValidatedAt,
@@ -1734,7 +1841,7 @@ export default class ComposerService extends Service {
     // document while in fullscreen mode. If the composer is closed for any reason
     // this class should be removed
 
-    const elem = document.querySelector("html");
+    const elem = document.documentElement;
     elem.classList.remove("fullscreen-composer");
     elem.classList.remove("composer-open");
 

@@ -5,7 +5,7 @@ module Plugin
 end
 
 class Plugin::Metadata
-  OFFICIAL_PLUGINS ||=
+  OFFICIAL_PLUGINS =
     Set.new(
       %w[
         discourse-adplugin
@@ -16,10 +16,8 @@ class Plugin::Metadata
         discourse-apple-auth
         discourse-assign
         discourse-auto-deactivate
-        discourse-automation
         discourse-bbcode
         discourse-bbcode-color
-        discourse-bcc
         discourse-cakeday
         discourse-calendar
         discourse-categories-suppressed
@@ -31,16 +29,15 @@ class Plugin::Metadata
         discourse-data-explorer
         discourse-details
         discourse-docs
-        discourse-encrypt
         discourse-follow
         discourse-fontawesome-pro
-        discourse-footnote
         discourse-gamification
         discourse-geoblocking
         discourse-github
         discourse-gradle-issue
         discourse-graphviz
         discourse-group-tracker
+        discourse-hcaptcha
         discourse-invite-tokens
         discourse-jira
         discourse-lazy-videos
@@ -50,7 +47,7 @@ class Plugin::Metadata
         discourse-logster-transporter
         discourse-lti
         discourse-math
-        discourse-moderator-attention
+        discourse-microsoft-auth
         discourse-narrative-bot
         discourse-newsletter-integration
         discourse-no-bump
@@ -58,8 +55,6 @@ class Plugin::Metadata
         discourse-openid-connect
         discourse-patreon
         discourse-perspective-api
-        discourse-linkedin-auth
-        discourse-microsoft-auth
         discourse-policy
         discourse-post-voting
         discourse-presence
@@ -72,11 +67,8 @@ class Plugin::Metadata
         discourse-salesforce
         discourse-saml
         discourse-saved-searches
-        discourse-shared-edits
         discourse-signatures
-        discourse-sitemap
         discourse-solved
-        discourse-spoiler-alert
         discourse-staff-alias
         discourse-steam-login
         discourse-subscriptions
@@ -93,26 +85,37 @@ class Plugin::Metadata
         discourse-yearly-review
         discourse-zendesk-plugin
         discourse-zoom
-        docker_manager
+        automation
         chat
-        poll
-        styleguide
         checklist
+        docker_manager
+        footnote
+        poll
+        spoiler-alert
+        styleguide
       ],
     )
 
-  FIELDS ||= %i[
-    name
-    about
-    version
-    authors
-    contact_emails
-    url
-    required_version
-    transpile_js
-    meta_topic_id
-  ]
+  FIELDS = %i[name about version authors contact_emails url required_version meta_topic_id label]
   attr_accessor(*FIELDS)
+
+  MAX_FIELD_LENGTHS = {
+    name: 75,
+    about: 350,
+    authors: 200,
+    contact_emails: 200,
+    url: 500,
+    label: 20,
+  }
+
+  def meta_topic_id=(value)
+    @meta_topic_id =
+      begin
+        Integer(value)
+      rescue StandardError
+        nil
+      end
+  end
 
   def self.parse(text)
     metadata = self.new
@@ -129,12 +132,17 @@ class Plugin::Metadata
 
     unless line.empty?
       return false unless line[0] == "#"
-      attribute, *description = line[1..-1].split(":")
+      attribute, *value = line[1..-1].split(":")
 
-      description = description.join(":")
+      value = value.join(":")
       attribute = attribute.strip.gsub(/ /, "_").to_sym
 
-      self.public_send("#{attribute}=", description.strip) if FIELDS.include?(attribute)
+      if FIELDS.include?(attribute)
+        self.public_send(
+          "#{attribute}=",
+          value.strip.truncate(MAX_FIELD_LENGTHS[attribute] || 1000),
+        )
+      end
     end
 
     true

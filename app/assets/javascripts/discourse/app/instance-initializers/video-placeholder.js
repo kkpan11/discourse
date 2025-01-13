@@ -1,7 +1,8 @@
+import { spinnerHTML } from "discourse/helpers/loading-spinner";
+import { iconHTML } from "discourse/lib/icon-library";
+import discourseLater from "discourse/lib/later";
 import { withPluginApi } from "discourse/lib/plugin-api";
-import { iconHTML } from "discourse-common/lib/icon-library";
-import discourseLater from "discourse-common/lib/later";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 export default {
   initialize(owner) {
@@ -9,6 +10,10 @@ export default {
       function handleVideoPlaceholderClick(helper, event) {
         const parentDiv = event.target.closest(".video-placeholder-container");
         const wrapper = parentDiv.querySelector(".video-placeholder-wrapper");
+        const overlay = wrapper.querySelector(".video-placeholder-overlay");
+
+        parentDiv.style.cursor = "";
+        overlay.innerHTML = spinnerHTML;
 
         const videoHTML = `
         <video width="100%" height="100%" preload="metadata" controls style="display:none">
@@ -39,9 +44,9 @@ export default {
               const notice = document.createElement("div");
               notice.className = "notice";
               notice.innerHTML =
-                iconHTML("exclamation-triangle") +
+                iconHTML("triangle-exclamation") +
                 " " +
-                I18n.t("cannot_render_video");
+                i18n("cannot_render_video");
 
               parentDiv.appendChild(notice);
             }
@@ -49,10 +54,20 @@ export default {
         });
 
         video.addEventListener("canplay", function () {
-          video.play();
+          if (caps.isIOS) {
+            // This is needed to fix video playback on iOS.
+            // Without it, videos will play, but they won't always be visible.
+            discourseLater(() => {
+              video.play();
+            }, 100);
+          } else {
+            video.play();
+          }
+
           wrapper.remove();
           video.style.display = "";
           parentDiv.classList.remove("video-placeholder-container");
+          parentDiv.style.backgroundImage = "none";
         });
       }
 
@@ -66,6 +81,15 @@ export default {
         );
 
         containers.forEach((container) => {
+          // Add video thumbnail image
+          if (container.dataset.thumbnailSrc) {
+            const thumbnail = new Image();
+            thumbnail.onload = function () {
+              container.style.backgroundImage = "url('" + thumbnail.src + "')";
+            };
+            thumbnail.src = container.dataset.thumbnailSrc;
+          }
+
           const wrapper = document.createElement("div"),
             overlay = document.createElement("div");
 
@@ -77,7 +101,7 @@ export default {
           container.addEventListener(
             "click",
             handleVideoPlaceholderClick.bind(null, helper),
-            false
+            { once: true }
           );
           overlay.innerHTML = `${iconHTML("play")}`;
           wrapper.appendChild(overlay);

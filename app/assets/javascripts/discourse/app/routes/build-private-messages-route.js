@@ -1,11 +1,11 @@
 import { action } from "@ember/object";
 import { htmlSafe } from "@ember/template";
 import { findOrResetCachedTopicList } from "discourse/lib/cached-topic-list";
+import getURL from "discourse/lib/get-url";
+import { iconHTML } from "discourse/lib/icon-library";
 import UserAction from "discourse/models/user-action";
 import UserTopicListRoute from "discourse/routes/user-topic-list";
-import getURL from "discourse-common/lib/get-url";
-import { iconHTML } from "discourse-common/lib/icon-library";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 export const NEW_FILTER = "new";
 export const UNREAD_FILTER = "unread";
@@ -14,41 +14,42 @@ export const ARCHIVE_FILTER = "archive";
 
 // A helper to build a user topic list route
 export default (inboxType, path, filter) => {
-  return UserTopicListRoute.extend({
-    userActionType: UserAction.TYPES.messages_received,
+  return class BuildPrivateMessagesRoute extends UserTopicListRoute {
+    userActionType = UserAction.TYPES.messages_received;
 
     titleToken() {
-      return [
-        I18n.t(`user.messages.${filter}`),
-        I18n.t("user.private_messages"),
-      ];
-    },
+      return [i18n(`user.messages.${filter}`), i18n("user.private_messages")];
+    }
 
-    model() {
-      const topicListFilter =
-        "topics/" + path + "/" + this.modelFor("user").get("username_lower");
+    async model(params = {}) {
+      const topicListFilter = `topics/${path}/${this.modelFor("user").get(
+        "username_lower"
+      )}`;
 
       const lastTopicList = findOrResetCachedTopicList(
         this.session,
         topicListFilter
       );
 
-      return lastTopicList
-        ? lastTopicList
-        : this.store
-            .findFiltered("topicList", { filter: topicListFilter })
-            .then((model) => {
-              // andrei: we agreed that this is an anti pattern,
-              // it's better to avoid mutating a rest model like this
-              // this place we'll be refactored later
-              // see https://github.com/discourse/discourse/pull/14313#discussion_r708784704
-              model.set("emptyState", this.emptyState());
-              return model;
-            });
-    },
+      if (lastTopicList) {
+        return lastTopicList;
+      }
+
+      const model = await this.store.findFiltered("topicList", {
+        filter: topicListFilter,
+        params,
+      });
+
+      // andrei: we agreed that this is an anti pattern,
+      // it's better to avoid mutating a rest model like this
+      // this place we'll be refactored later
+      // see https://github.com/discourse/discourse/pull/14313#discussion_r708784704
+      model.set("emptyState", this.emptyState());
+      return model;
+    }
 
     setupController() {
-      this._super.apply(this, arguments);
+      super.setupController(...arguments);
 
       const userPrivateMessagesController = this.controllerFor(
         "user-private-messages"
@@ -65,6 +66,17 @@ export default (inboxType, path, filter) => {
         group: null,
         inbox: inboxType,
       });
+
+      let ascending = userTopicsListController.ascending;
+      if (ascending === "true") {
+        ascending = true;
+      } else if (ascending === "false") {
+        ascending = false;
+      }
+      userTopicsListController.setProperties({
+        ascending,
+      });
+
       userTopicsListController.bulkSelectHelper.clear();
 
       userTopicsListController.subscribe();
@@ -84,18 +96,20 @@ export default (inboxType, path, filter) => {
         type: "private_messages",
       };
       this.searchService.searchContext = pmSearchContext;
-    },
+    }
 
     emptyState() {
-      const title = I18n.t("user.no_messages_title");
-      const body = htmlSafe(
-        I18n.t("user.no_messages_body", {
-          aboutUrl: getURL("/about"),
-          icon: iconHTML("envelope"),
-        })
-      );
+      const title = i18n("user.no_messages_title");
+      const body = this.currentUser?.can_send_private_messages
+        ? htmlSafe(
+            i18n("user.no_messages_body", {
+              aboutUrl: getURL("/about"),
+              icon: iconHTML("envelope"),
+            })
+          )
+        : "";
       return { title, body };
-    },
+    }
 
     deactivate() {
       this.controllerFor("user-topics-list").unsubscribe();
@@ -103,11 +117,11 @@ export default (inboxType, path, filter) => {
       this.searchService.searchContext = this.controllerFor("user").get(
         "model.searchContext"
       );
-    },
+    }
 
     dismissReadOptions() {
       return {};
-    },
+    }
 
     @action
     dismissReadTopics(dismissTopics) {
@@ -118,6 +132,6 @@ export default (inboxType, path, filter) => {
         private_message_inbox: inboxType,
         ...this.dismissReadOptions(),
       });
-    },
-  });
+    }
+  };
 };

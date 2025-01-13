@@ -64,11 +64,6 @@ RSpec.describe Email::Styles do
       expect(frag.at("a")["style"]).to be_present
     end
 
-    it "attaches a style to a tags" do
-      frag = html_fragment("<a href>wat</a>")
-      expect(frag.at("a")["style"]).to be_present
-    end
-
     it "attaches a style to ul and li tags" do
       frag = html_fragment("<ul><li>hello</li></ul>")
       expect(frag.at("ul")["style"]).to be_present
@@ -170,6 +165,25 @@ RSpec.describe Email::Styles do
         frag = html_fragment('<img src="//test.localhost/blah.jpg">')
         expect(frag.at("img")["src"]).to eq("https://test.localhost/blah.jpg")
       end
+    end
+  end
+
+  describe "deduplicate styles" do
+    it "removes double definitions" do
+      frag = "<test style='color:green;color:red'>hello</test>"
+
+      styler = Email::Styles.new(frag)
+      styled = styler.to_html
+      styled = Nokogiri::HTML5.fragment(styled)
+      expect(styled.at("test")["style"]).to eq("color:red")
+    end
+    it "handles whitespace correctly" do
+      frag =
+        "<test style=' color :  green ; ; ;   color :    red; background:white;  background:yellow '>hello</test>"
+      styler = Email::Styles.new(frag)
+      styled = styler.to_html
+      styled = Nokogiri::HTML5.fragment(styled)
+      expect(styled.at("test")["style"]).to eq("color:red;background:yellow")
     end
   end
 
@@ -294,7 +308,7 @@ RSpec.describe Email::Styles do
     end
   end
 
-  describe "inline_secure_images" do
+  describe "#inline_secure_images" do
     before do
       setup_s3
       SiteSetting.secure_uploads = true

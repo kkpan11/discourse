@@ -2,15 +2,21 @@
 
 module RetrieveTitle
   CRAWL_TIMEOUT = 1
+  UNRECOVERABLE_ERRORS = [
+    Net::ReadTimeout,
+    FinalDestination::SSRFError,
+    FinalDestination::UrlEncodingError,
+  ]
 
-  def self.crawl(url, max_redirects: nil, initial_https_redirect_ignore_limit: false)
+  def self.crawl(url, max_redirects: nil, initial_https_redirect_ignore_limit: false, headers: {})
     fetch_title(
       url,
       max_redirects: max_redirects,
       initial_https_redirect_ignore_limit: initial_https_redirect_ignore_limit,
+      headers: headers,
     )
-  rescue Net::ReadTimeout, FinalDestination::SSRFError
-    # do nothing for Net::ReadTimeout errors
+  rescue *UNRECOVERABLE_ERRORS
+    # ¯\_(ツ)_/¯
   end
 
   def self.extract_title(html, encoding = nil)
@@ -19,7 +25,7 @@ module RetrieveTitle
 
     doc = nil
     begin
-      doc = Nokogiri.HTML5(html, nil, encoding)
+      doc = Nokogiri.HTML5(html, encoding:)
     rescue ArgumentError
       # invalid HTML (Eg: too many attributes, status tree too deep) - ignore
       # Error in nokogumbo is not specialized, uses generic ArgumentError
@@ -65,7 +71,12 @@ module RetrieveTitle
   end
 
   # Fetch the beginning of a HTML document at a url
-  def self.fetch_title(url, max_redirects: nil, initial_https_redirect_ignore_limit: false)
+  def self.fetch_title(
+    url,
+    max_redirects: nil,
+    initial_https_redirect_ignore_limit: false,
+    headers: {}
+  )
     fd =
       FinalDestination.new(
         url,
@@ -73,6 +84,7 @@ module RetrieveTitle
         stop_at_blocked_pages: true,
         max_redirects: max_redirects,
         initial_https_redirect_ignore_limit: initial_https_redirect_ignore_limit,
+        headers: headers.merge({ Accept: "text/html,*/*" }),
       )
 
     current = nil

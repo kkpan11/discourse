@@ -1,13 +1,11 @@
 # frozen_string_literal: true
 
 RSpec.describe PostSerializer do
-  fab!(:post) { Fabricate(:post) }
-
-  before { Group.refresh_automatic_groups! }
+  fab!(:post)
 
   context "with a post with lots of actions" do
-    fab!(:actor) { Fabricate(:user) }
-    fab!(:admin) { Fabricate(:admin) }
+    fab!(:actor) { Fabricate(:user, refresh_auto_groups: true) }
+    fab!(:admin)
     let(:acted_ids) do
       PostActionType.public_types.values.concat(
         %i[notify_user spam].map { |k| PostActionType.types[k] },
@@ -56,7 +54,9 @@ RSpec.describe PostSerializer do
   end
 
   context "with a post with reviewable content" do
-    let!(:reviewable) { PostActionCreator.spam(Fabricate(:user), post).reviewable }
+    let!(:reviewable) do
+      PostActionCreator.spam(Fabricate(:user, refresh_auto_groups: true), post).reviewable
+    end
 
     it "includes the reviewable data" do
       json =
@@ -94,7 +94,7 @@ RSpec.describe PostSerializer do
 
       expect(serializer[:user_suspended]).to eq(true)
 
-      freeze_time (2.months.from_now)
+      freeze_time(2.months.from_now)
 
       expect(serializer[:user_suspended]).to be_nil
     end
@@ -281,14 +281,14 @@ RSpec.describe PostSerializer do
   end
 
   context "with posts when group moderation is enabled" do
-    fab!(:topic) { Fabricate(:topic) }
-    fab!(:group_user) { Fabricate(:group_user) }
+    fab!(:topic)
+    fab!(:group_user)
     fab!(:post) { Fabricate(:post, topic: topic) }
-
-    before do
-      SiteSetting.enable_category_group_moderation = true
-      topic.category.update!(reviewable_by_group_id: group_user.group.id)
+    fab!(:category_moderation_group) do
+      Fabricate(:category_moderation_group, category: topic.category, group: group_user.group)
     end
+
+    before { SiteSetting.enable_category_group_moderation = true }
 
     it "does nothing for regular users" do
       expect(serialized_post_for_user(nil)[:group_moderator]).to eq(nil)
@@ -311,7 +311,7 @@ RSpec.describe PostSerializer do
   end
 
   context "with allow_anonymous_likes enabled" do
-    fab!(:user) { Fabricate(:user) }
+    fab!(:user)
     fab!(:topic) { Fabricate(:topic, user: user) }
     fab!(:post) { Fabricate(:post, topic: topic, user: topic.user) }
     fab!(:anonymous_user) { Fabricate(:anonymous) }
@@ -362,8 +362,50 @@ RSpec.describe PostSerializer do
     end
   end
 
+  context "with mentions" do
+    fab!(:user_status)
+    fab!(:user)
+
+    let(:username) { "joffrey" }
+    let(:user1) { Fabricate(:user, user_status: user_status, username: username) }
+    let(:post) { Fabricate(:post, user: user, raw: "Hey @#{user1.username}") }
+    let(:serializer) { described_class.new(post, scope: Guardian.new(user), root: false) }
+
+    context "when user status is enabled" do
+      before { SiteSetting.enable_user_status = true }
+
+      it "returns mentioned users with user status" do
+        json = serializer.as_json
+        expect(json[:mentioned_users]).to be_present
+        expect(json[:mentioned_users].length).to be(1)
+        expect(json[:mentioned_users][0]).to_not be_nil
+        expect(json[:mentioned_users][0][:id]).to eq(user1.id)
+        expect(json[:mentioned_users][0][:username]).to eq(user1.username)
+        expect(json[:mentioned_users][0][:name]).to eq(user1.name)
+        expect(json[:mentioned_users][0][:status][:description]).to eq(user_status.description)
+        expect(json[:mentioned_users][0][:status][:emoji]).to eq(user_status.emoji)
+      end
+
+      context "when username has a capital letter" do
+        let(:username) { "JoJo" }
+
+        it "returns mentioned users with user status" do
+          expect(serializer.as_json[:mentioned_users][0][:username]).to eq(user1.username)
+        end
+      end
+    end
+
+    context "when user status is disabled" do
+      before { SiteSetting.enable_user_status = false }
+
+      it "doesn't return mentioned users" do
+        expect(serializer.as_json[:mentioned_users]).to be_nil
+      end
+    end
+  end
+
   describe "#user_status" do
-    fab!(:user_status) { Fabricate(:user_status) }
+    fab!(:user_status)
     fab!(:user) { Fabricate(:user, user_status: user_status) }
     fab!(:post) { Fabricate(:post, user: user) }
     let(:serializer) { described_class.new(post, scope: Guardian.new(user), root: false) }
@@ -393,6 +435,201 @@ RSpec.describe PostSerializer do
       json = serializer.as_json
 
       expect(json.keys).not_to include :user_status
+    end
+  end
+
+  describe "#badges_granted" do
+    fab!(:user)
+    fab!(:user2) { Fabricate(:user) }
+    fab!(:post) { Fabricate(:post, user: user) }
+    fab!(:post2) { Fabricate(:post, user: user) }
+
+    # Create twp badges that have all required flags set to true
+    fab!(:badge1) do
+      Badge.create!(
+        name: "SomeBadge",
+        badge_type_id: BadgeType::Bronze,
+        listable: true,
+        show_posts: true,
+        show_in_post_header: true,
+        multiple_grant: true,
+      )
+    end
+    fab!(:ub1) do
+      UserBadge.create!(
+        badge_id: badge1.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    fab!(:badge2) do
+      Badge.create!(
+        name: "SomeOtherBadge",
+        badge_type_id: BadgeType::Bronze,
+        listable: true,
+        show_posts: true,
+        show_in_post_header: true,
+        multiple_grant: true,
+      )
+    end
+    fab!(:ub2) do
+      UserBadge.create!(
+        badge_id: badge2.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    # Create a badge that has the show_posts flag set to false
+    fab!(:badge3) do
+      Badge.create!(
+        name: "YetAnotherBadge",
+        badge_type_id: BadgeType::Bronze,
+        listable: true,
+        show_posts: false,
+        show_in_post_header: true,
+      )
+    end
+    fab!(:ub3) do
+      UserBadge.create!(
+        badge_id: badge3.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    # Re-use our first badge, but on a different post
+    fab!(:ub4) do
+      UserBadge.create!(
+        badge_id: badge1.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post2.id,
+      )
+    end
+
+    # Now re-use our first badge, but on a different user
+    fab!(:ub5) do
+      UserBadge.create!(
+        badge_id: badge1.id,
+        user: user2,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    # Create a badge that has the listable flag set to false
+    fab!(:badge4) do
+      Badge.create!(
+        name: "WeirdBadge",
+        badge_type_id: BadgeType::Bronze,
+        listable: false,
+        show_posts: true,
+        show_in_post_header: true,
+      )
+    end
+    fab!(:ub6) do
+      UserBadge.create!(
+        badge_id: badge4.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    # Create a badge that has the show_in_post_header flag set to false
+    fab!(:badge5) do
+      Badge.create!(
+        name: "StrangeBadge",
+        badge_type_id: BadgeType::Bronze,
+        listable: true,
+        show_posts: true,
+        show_in_post_header: false,
+      )
+    end
+    fab!(:ub7) do
+      UserBadge.create!(
+        badge_id: badge5.id,
+        user: user,
+        granted_by: Discourse.system_user,
+        granted_at: Time.now,
+        post_id: post.id,
+      )
+    end
+
+    let(:serializer) { described_class.new(post, scope: Guardian.new(user), root: false) }
+
+    it "doesn't include badges when `enable_badges` site setting is disabled" do
+      SiteSetting.enable_badges = false
+      expect(serializer.as_json[:badges_granted]).to eq([])
+    end
+
+    it "doesn't include badges when `show_badges_in_post_header` site setting is disabled" do
+      SiteSetting.enable_badges = true
+      SiteSetting.show_badges_in_post_header = false
+      expect(serializer.as_json[:badges_granted]).to eq([])
+    end
+
+    context "when `enable_badges` and `show_badges_in_post_header` site settings are enabled" do
+      before do
+        SiteSetting.enable_badges = true
+        SiteSetting.show_badges_in_post_header = true
+      end
+
+      it "includes badges that were granted for this user on this post" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].length).to eq(2)
+        expect(json[:badges_granted].map { |b| b[:badges][0][:id] }).to contain_exactly(
+          ub1.badge_id,
+          ub2.badge_id,
+        )
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).to contain_exactly(
+          ub1.id,
+          ub2.id,
+        )
+      end
+
+      it "does not return a user badge that has the show_posts flag set to false" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).not_to include(ub3.id)
+      end
+
+      it "does not return a user badge that was not granted for this post" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).not_to include(ub4.id)
+      end
+
+      it "does not return a user badge that was granted for a different user" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).not_to include(ub5.id)
+      end
+
+      it "does not return a user badge that has the listable flag set to false" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).not_to include(ub6.id)
+      end
+
+      it "does not return a user badge that has the show_in_post_header flag set to false" do
+        json = serializer.as_json
+
+        expect(json[:badges_granted].map { |b| b[:basic_user_badge][:id] }).not_to include(ub7.id)
+      end
     end
   end
 

@@ -353,7 +353,16 @@ def regenerate_missing_optimized
 
         if File.exist?(original) && File.size(original) > 0
           FileUtils.mkdir_p(File.dirname(thumbnail))
-          OptimizedImage.resize(original, thumbnail, optimized_image.width, optimized_image.height)
+          if upload.extension == "svg"
+            FileUtils.cp(original, thumbnail)
+          else
+            OptimizedImage.resize(
+              original,
+              thumbnail,
+              optimized_image.width,
+              optimized_image.height,
+            )
+          end
           putc "#"
         else
           missing_uploads << original
@@ -536,16 +545,25 @@ task "uploads:sync_s3_acls" => :environment do
   end
 end
 
-#
-# TODO (martin) Update this rake task to use the _first_ UploadReference
+def secure_upload_rebake_warning
+  puts "This task may mark a lot of posts for rebaking. To get through these quicker, the max_old_rebakes_per_15_minutes global setting (current value #{GlobalSetting.max_old_rebakes_per_15_minutes}) should be changed and the rebake_old_posts_count site setting (current value #{SiteSetting.rebake_old_posts_count}) increased as well. Do you want to proceed? (y/n)"
+end
+
+# NOTE: This needs to be updated to use the _first_ UploadReference
 # record for each upload to determine security, and do not mark things
 # as secure if the first record is something public e.g. a site setting.
+#
+# Alternatively, we need to overhaul this rake task to work with whatever
+# other strategy we come up with for secure uploads.
 task "uploads:disable_secure_uploads" => :environment do
   RailsMultisite::ConnectionManagement.each_connection do |db|
     unless Discourse.store.external?
       puts "This task only works for external storage."
       exit 1
     end
+
+    secure_upload_rebake_warning
+    exit 1 if STDIN.gets.chomp.downcase != "y"
 
     puts "Disabling secure upload and resetting uploads to not secure in #{db}...", ""
 
@@ -572,8 +590,7 @@ task "uploads:disable_secure_uploads" => :environment do
         secure_upload_ids,
       )
     adjust_acls(secure_upload_ids)
-    post_rebake_errors = rebake_upload_posts(post_ids_to_rebake)
-    log_rebake_errors(post_rebake_errors)
+    mark_upload_posts_for_rebake(post_ids_to_rebake)
 
     puts "", "Rebaking and uploading complete!", ""
   end
@@ -588,9 +605,12 @@ end
 # have their secure status changed will have all associated posts
 # rebaked.
 #
-# TODO (martin) Update this rake task to use the _first_ UploadReference
+# NOTE: This needs to be updated to use the _first_ UploadReference
 # record for each upload to determine security, and do not mark things
 # as secure if the first record is something public e.g. a site setting.
+#
+# Alternatively, we need to overhaul this rake task to work with whatever
+# other strategy we come up with for secure uploads.
 task "uploads:secure_upload_analyse_and_update" => :environment do
   RailsMultisite::ConnectionManagement.each_connection do |db|
     unless Discourse.store.external?
@@ -598,13 +618,16 @@ task "uploads:secure_upload_analyse_and_update" => :environment do
       exit 1
     end
 
+    secure_upload_rebake_warning
+    exit 1 if STDIN.gets.chomp.downcase != "y"
+
     puts "Analyzing security for uploads in #{db}...", ""
     all_upload_ids_changed, post_ids_to_rebake = nil
     Upload.transaction do
       # If secure upload is enabled we need to first set the access control post of
       # all post uploads (even uploads that are linked to multiple posts). If the
       # upload is not set to secure upload then this has no other effect on the upload,
-      # but we _must_ know what the access control post is because the with_secure_uploads?
+      # but we _must_ know what the access control post is because the should_secure_uploads?
       # method is on the post, and this knows about the category security & PM status
       update_uploads_access_control_post if SiteSetting.secure_uploads?
 
@@ -613,11 +636,17 @@ task "uploads:secure_upload_analyse_and_update" => :environment do
         # Simply mark all uploads linked to posts secure if login_required because
         # no anons will be able to access them; however if secure_uploads_pm_only is
         # true then login_required will not mark other uploads secure.
+        puts "",
+             "Site is login_required, and secure_uploads_pm_only is false. Continuing with strategy to mark all post uploads as secure.",
+             ""
         post_ids_to_rebake, all_upload_ids_changed = mark_all_as_secure_login_required
       else
         # Otherwise only mark uploads linked to posts either:
         #   * In secure categories or PMs if !SiteSetting.secure_uploads_pm_only
         #   * In PMs if SiteSetting.secure_uploads_pm_only
+        puts "",
+             "Site is not login_required. Continuing with normal strategy to mark uploads in secure contexts as secure.",
+             ""
         post_ids_to_rebake, all_upload_ids_changed =
           update_specific_upload_security_no_login_required
       end
@@ -625,8 +654,14 @@ task "uploads:secure_upload_analyse_and_update" => :environment do
 
     # Enqueue rebakes AFTER upload transaction complete, so there is no race condition
     # between updating the DB and the rebakes occurring.
-    post_rebake_errors = rebake_upload_posts(post_ids_to_rebake)
-    log_rebake_errors(post_rebake_errors)
+    #
+    # This is done asynchronously by changing the baked_version to NULL on
+    # affected posts and relying on Post.rebake_old in the PeriodicalUpdates
+    # job. To speed this up, these levers can be adjusted:
+    #
+    # * SiteSetting.rebake_old_posts_count
+    # * GlobalSetting.max_old_rebakes_per_15_minutes
+    mark_upload_posts_for_rebake(post_ids_to_rebake)
 
     # Also do this AFTER upload transaction complete so we don't end up with any
     # errors leaving ACLs in a bad state (the ACL sync task can be run to fix any
@@ -663,7 +698,7 @@ def mark_all_as_secure_login_required
         security_last_changed_reason = 'upload security rake task mark as secure',
         security_last_changed_at = NOW()
     FROM upl
-    WHERE uploads.id = upl.upload_id AND NOT uploads.secure
+    WHERE uploads.id = upl.upload_id
     RETURNING uploads.id
   SQL
   puts "Marked #{post_upload_ids_marked_secure.count} upload(s) as secure because login_required is true.",
@@ -673,7 +708,7 @@ def mark_all_as_secure_login_required
     SET secure = false,
         security_last_changed_reason = 'upload security rake task mark as not secure',
         security_last_changed_at = NOW()
-    WHERE id NOT IN (?) AND uploads.secure
+    WHERE id NOT IN (?)
     RETURNING uploads.id
   SQL
   puts "Marked #{upload_ids_marked_not_secure.count} upload(s) as not secure because they are not linked to posts.",
@@ -783,24 +818,20 @@ def update_uploads_access_control_post
   SQL
 end
 
-def rebake_upload_posts(post_ids_to_rebake)
+def mark_upload_posts_for_rebake(post_ids_to_rebake)
   posts_to_rebake = Post.where(id: post_ids_to_rebake)
   post_rebake_errors = []
-  puts "", "Rebaking #{posts_to_rebake.length} posts with affected uploads.", ""
-  begin
-    i = 0
-    posts_to_rebake.each do |post|
-      RakeHelpers.print_status_with_label("Rebaking posts.....", i, posts_to_rebake.length)
-      post.rebake!
-      i += 1
-    end
-
-    RakeHelpers.print_status_with_label("Rebaking complete!            ", i, posts_to_rebake.length)
-    puts ""
-  rescue => e
-    post_rebake_errors << e.message
-  end
-  post_rebake_errors
+  puts "",
+       "Marking #{posts_to_rebake.length} posts with affected uploads for rebake. Every 15 minutes, a batch of these will be enqueued for rebaking.",
+       ""
+  posts_to_rebake.update_all(baked_version: nil)
+  File.write(
+    "secure_upload_analyse_and_update_posts_for_rebake.json",
+    MultiJson.dump({ post_ids: post_ids_to_rebake }),
+  )
+  puts "",
+       "Post IDs written to secure_upload_analyse_and_update_posts_for_rebake.json for reference",
+       ""
 end
 
 def inline_uploads(post)
@@ -940,7 +971,7 @@ def analyze_missing_s3
       puts
     end
 
-  missing_uploads = Upload.where(verification_status: Upload.verification_statuses[:invalid_etag])
+  missing_uploads = Upload.with_invalid_etag_verification_status
   puts "Total missing uploads: #{missing_uploads.count}, newest is #{missing_uploads.maximum(:created_at)}"
   puts "Total problem posts: #{lookup.keys.count} with #{lookup.values.sum { |a| a.length }} missing uploads"
   puts "Other missing uploads count: #{other.count}"
@@ -965,6 +996,7 @@ def analyze_missing_s3
       %i[categories uploaded_logo_id],
       %i[categories uploaded_logo_dark_id],
       %i[categories uploaded_background_id],
+      %i[categories uploaded_background_dark_id],
       %i[custom_emojis upload_id],
       %i[theme_fields upload_id],
       %i[user_exports upload_id],
@@ -981,16 +1013,15 @@ def analyze_missing_s3
 end
 
 def delete_missing_s3
-  missing =
-    Upload.where(verification_status: Upload.verification_statuses[:invalid_etag]).order(
-      :created_at,
-    )
+  missing = Upload.with_invalid_etag_verification_status.order(:created_at)
   count = missing.count
+
   if count > 0
     puts "The following uploads will be deleted from the database"
     missing.each { |upload| puts "#{upload.id} - #{upload.url} - #{upload.created_at}" }
     puts "Please confirm you wish to delete #{count} upload records by typing YES"
     confirm = STDIN.gets.strip
+
     if confirm == "YES"
       missing.destroy_all
       puts "#{count} records were deleted"
@@ -998,6 +1029,29 @@ def delete_missing_s3
       STDERR.puts "Aborting"
       exit 1
     end
+  end
+end
+
+task "uploads:mark_invalid_s3_uploads_as_missing" => :environment do
+  puts "Marking invalid S3 uploads as missing for '#{RailsMultisite::ConnectionManagement.current_db}'..."
+  invalid_s3_uploads = Upload.with_invalid_etag_verification_status.order(:created_at)
+  count = invalid_s3_uploads.count
+
+  if count > 0
+    puts "The following uploads will be marked as missing on S3"
+    invalid_s3_uploads.each { |upload| puts "#{upload.id} - #{upload.url} - #{upload.created_at}" }
+    puts "Please confirm you wish to mark #{count} upload records as missing by typing YES"
+    confirm = STDIN.gets.strip
+
+    if confirm == "YES"
+      changed_count = Upload.mark_invalid_s3_uploads_as_missing
+      puts "#{changed_count} records were marked as missing"
+    else
+      STDERR.puts "Aborting"
+      exit 1
+    end
+  else
+    puts "No uploads found with invalid S3 etag verification status"
   end
 end
 
@@ -1021,7 +1075,7 @@ def fix_missing_s3
   Jobs.run_immediately!
 
   puts "Attempting to download missing uploads and recreate"
-  ids = Upload.where(verification_status: Upload.verification_statuses[:invalid_etag]).pluck(:id)
+  ids = Upload.with_invalid_etag_verification_status.pluck(:id)
   ids.each do |id|
     upload = Upload.find_by(id: id)
     next if !upload
@@ -1068,6 +1122,7 @@ def fix_missing_s3
               tempfile,
               "temp.#{upload.extension}",
               skip_validations: true,
+              external_upload_too_big: true,
             ).create_for(Discourse.system_user.id)
         rescue => fix_error
           # invalid extension is the most common issue

@@ -1,16 +1,21 @@
 import Component from "@glimmer/component";
-import { getOwner } from "@ember/application";
 import { fn } from "@ember/helper";
 import { action } from "@ember/object";
 import { schedule } from "@ember/runloop";
-import { inject as service } from "@ember/service";
+import { service } from "@ember/service";
+import { htmlSafe } from "@ember/template";
 import DButton from "discourse/components/d-button";
 import ConfirmSession from "discourse/components/dialog-messages/confirm-session";
 import PasskeyOptionsDropdown from "discourse/components/user-preferences/passkey-options-dropdown";
 import RenamePasskey from "discourse/components/user-preferences/rename-passkey";
+import formatDate from "discourse/helpers/format-date";
 import { popupAjaxError } from "discourse/lib/ajax-error";
-import { bufferToBase64, stringToBuffer } from "discourse/lib/webauthn";
-import I18n from "I18n";
+import {
+  bufferToBase64,
+  stringToBuffer,
+  WebauthnAbortHandler,
+} from "discourse/lib/webauthn";
+import { i18n } from "discourse-i18n";
 
 export default class UserPasskeys extends Component {
   @service dialog;
@@ -18,27 +23,11 @@ export default class UserPasskeys extends Component {
   @service capabilities;
   @service router;
 
-  instructions = I18n.t("user.passkeys.short_description");
-  title = I18n.t("user.passkeys.title");
-  formatDate = getOwner(this).resolveRegistration("helper:format-date");
-  addedPrefix = I18n.t("user.passkeys.added_prefix");
-  lastUsedPrefix = I18n.t("user.passkeys.last_used_prefix");
-  neverUsed = I18n.t("user.passkeys.never_used");
-
-  isCurrentUser() {
-    return this.currentUser.id === this.args.model.id;
-  }
-
-  passkeyDefaultName() {
-    if (this.capabilities.isSafari) {
-      return I18n.t("user.passkeys.name.icloud_keychain");
-    }
-
-    if (this.capabilities.isAndroid || this.capabilities.isChrome) {
-      return I18n.t("user.passkeys.name.google_password_manager");
-    }
-
-    return I18n.t("user.passkeys.name.default");
+  get showActions() {
+    return (
+      this.currentUser.id === this.args.model.id &&
+      !this.capabilities.isAppWebview
+    );
   }
 
   async createPasskey() {
@@ -81,6 +70,7 @@ export default class UserPasskeys extends Component {
 
       const credential = await navigator.credentials.create({
         publicKey: publicKeyCredentialCreationOptions,
+        signal: WebauthnAbortHandler.signal(),
       });
 
       let credentialParam = {
@@ -89,7 +79,7 @@ export default class UserPasskeys extends Component {
         type: credential.type,
         attestation: bufferToBase64(credential.response.attestationObject),
         clientData: bufferToBase64(credential.response.clientDataJSON),
-        name: this.passkeyDefaultName(),
+        name: i18n("user.passkeys.name.default"),
       };
 
       const registrationResponse = await this.args.model.registerPasskey(
@@ -105,16 +95,18 @@ export default class UserPasskeys extends Component {
 
       // Prompt to rename key after creating
       this.dialog.dialog({
-        title: I18n.t("user.passkeys.passkey_successfully_created"),
+        title: i18n("user.passkeys.passkey_successfully_created"),
         type: "notice",
         bodyComponent: RenamePasskey,
         bodyComponentModel: registrationResponse,
       });
     } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error(error);
       this.errorMessage =
         error.name === "InvalidStateError"
-          ? I18n.t("user.passkeys.already_added_error")
-          : I18n.t("user.passkeys.not_allowed_error");
+          ? i18n("user.passkeys.already_added_error")
+          : i18n("user.passkeys.not_allowed_error");
       this.dialog.alert(this.errorMessage);
     }
   }
@@ -122,7 +114,7 @@ export default class UserPasskeys extends Component {
   confirmDelete(id) {
     schedule("afterRender", () => {
       this.dialog.deleteConfirm({
-        title: I18n.t("user.passkeys.confirm_delete_passkey"),
+        title: i18n("user.passkeys.confirm_delete_passkey"),
         didConfirm: () => {
           this.args.model.deletePasskey(id).then(() => {
             this.router.refresh();
@@ -139,7 +131,7 @@ export default class UserPasskeys extends Component {
 
       if (!trustedSession.success) {
         this.dialog.dialog({
-          title: I18n.t("user.confirm_access.title"),
+          title: i18n("user.confirm_access.title"),
           type: "notice",
           bodyComponent: ConfirmSession,
           didConfirm: () => this.createPasskey(),
@@ -159,7 +151,7 @@ export default class UserPasskeys extends Component {
 
       if (!trustedSession.success) {
         this.dialog.dialog({
-          title: I18n.t("user.confirm_access.title"),
+          title: i18n("user.confirm_access.title"),
           type: "notice",
           bodyComponent: ConfirmSession,
           didConfirm: () => this.confirmDelete(id),
@@ -175,7 +167,7 @@ export default class UserPasskeys extends Component {
   @action
   renamePasskey(id, name) {
     this.dialog.dialog({
-      title: I18n.t("user.passkeys.rename_passkey"),
+      title: i18n("user.passkeys.rename_passkey"),
       type: "notice",
       bodyComponent: RenamePasskey,
       bodyComponentModel: { id, name },
@@ -185,10 +177,10 @@ export default class UserPasskeys extends Component {
   <template>
     <div class="control-group pref-passkeys">
       <label class="control-label">
-        {{this.title}}
+        {{i18n "user.passkeys.title"}}
       </label>
       <div class="instructions">
-        {{this.instructions}}
+        {{i18n "user.passkeys.short_description"}}
       </div>
 
       <div class="pref-passkeys__rows">
@@ -197,31 +189,31 @@ export default class UserPasskeys extends Component {
             <div class="passkey-left">
               <div class="row-passkey__name">{{passkey.name}}</div>
               <div class="row-passkey__created-date">
-                <span class="prefix">
-                  {{this.addedPrefix}}
-                </span>
-                {{this.formatDate
-                  passkey.created_at
-                  format="medium"
-                  leaveAgo="true"
+                {{htmlSafe
+                  (i18n
+                    "user.passkeys.added_date"
+                    date=(formatDate
+                      passkey.created_at format="medium" leaveAgo="true"
+                    )
+                  )
                 }}
               </div>
               <div class="row-passkey__used-date">
                 {{#if passkey.last_used}}
-                  <span class="prefix">
-                    {{this.lastUsedPrefix}}
-                  </span>
-                  {{this.formatDate
-                    passkey.last_used
-                    format="medium"
-                    leaveAgo="true"
+                  {{htmlSafe
+                    (i18n
+                      "user.passkeys.last_used_date"
+                      date=(formatDate
+                        passkey.last_used format="medium" leaveAgo="true"
+                      )
+                    )
                   }}
                 {{else}}
-                  {{this.neverUsed}}
+                  {{i18n "user.passkeys.never_used"}}
                 {{/if}}
               </div>
             </div>
-            {{#if this.isCurrentUser}}
+            {{#if this.showActions}}
               <div class="passkey-right">
                 <div class="actions">
                   <PasskeyOptionsDropdown
@@ -239,15 +231,15 @@ export default class UserPasskeys extends Component {
         {{/each}}
       </div>
 
-      <div class="controls pref-passkeys__add">
-        {{#if this.isCurrentUser}}
+      {{#if this.showActions}}
+        <div class="controls pref-passkeys__add">
           <DButton
             @action={{this.addPasskey}}
             @icon="plus"
             @label="user.passkeys.add_passkey"
           />
-        {{/if}}
-      </div>
+        </div>
+      {{/if}}
     </div>
   </template>
 }

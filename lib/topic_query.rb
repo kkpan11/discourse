@@ -8,8 +8,8 @@
 class TopicQuery
   include PrivateMessageLists
 
-  PG_MAX_INT ||= 2_147_483_647
-  DEFAULT_PER_PAGE_COUNT ||= 30
+  PG_MAX_INT = 2_147_483_647
+  DEFAULT_PER_PAGE_COUNT = 30
 
   def self.validators
     @validators ||=
@@ -17,14 +17,32 @@ class TopicQuery
         int = lambda { |x| Integer === x || (String === x && x.match?(/\A-?[0-9]+\z/)) }
         zero_up_to_max_int = lambda { |x| int.call(x) && x.to_i.between?(0, PG_MAX_INT) }
         array_or_string = lambda { |x| Array === x || String === x }
+        string = lambda { |x| String === x }
+        true_or_false = lambda { |x| x == true || x == false || x == "true" || x == "false" }
 
         {
+          page: zero_up_to_max_int,
           before: zero_up_to_max_int,
           bumped_before: zero_up_to_max_int,
-          max_posts: zero_up_to_max_int,
+          topic_ids: array_or_string,
+          category: string,
+          order: string,
+          ascending: true_or_false,
           min_posts: zero_up_to_max_int,
-          page: zero_up_to_max_int,
+          max_posts: zero_up_to_max_int,
+          status: string,
+          filter: string,
+          state: string,
+          search: string,
+          q: string,
+          f: string,
+          subset: string,
+          group_name: string,
           tags: array_or_string,
+          match_all_tags: true_or_false,
+          no_subcategories: true_or_false,
+          no_tags: true_or_false,
+          exclude_tag: string,
         }
       end
   end
@@ -38,7 +56,7 @@ class TopicQuery
   end
 
   def self.public_valid_options
-    # For these to work in Ember, add them to `controllers/discovery-sortable.js`
+    # For these to work in Ember, add them to `controllers/discovery/list.js`
     @public_valid_options ||= %i[
       page
       before
@@ -338,6 +356,17 @@ class TopicQuery
     create_list(:bookmarks) { |l| l.where("tu.bookmarked") }
   end
 
+  def list_hot
+    create_list(:hot, unordered: true, prioritize_pinned: true) do |topics|
+      topics = remove_muted_topics(topics, user)
+      topics = remove_muted_categories(topics, user, exclude: options[:category])
+      TopicQuery.remove_muted_tags(topics, user, options)
+      topics.joins("JOIN topic_hot_scores on topics.id = topic_hot_scores.topic_id").order(
+        "topic_hot_scores.score DESC",
+      )
+    end
+  end
+
   def list_top_for(period)
     score_column = TopTopic.score_column_for_period(period)
     create_list(:top, unordered: true) do |topics|
@@ -393,7 +422,7 @@ class TopicQuery
 
   def list_new_in_category(category)
     create_list(:new_in_category, unordered: true, category: category.id) do |list|
-      list.by_newest.first(25)
+      list.by_newest.limit(25)
     end
   end
 
@@ -495,10 +524,12 @@ class TopicQuery
       DiscoursePluginRegistry.apply_modifier(:topic_query_create_list_topics, topics, options, self)
 
     options = options.merge(@options)
-    if %w[activity default].include?(options[:order] || "activity") && !options[:unordered] &&
-         filter != :private_messages
-      topics = prioritize_pinned_topics(topics, options)
-    end
+
+    apply_pinning = filter != :private_messages
+    apply_pinning &&= %w[activity default].include?(options[:order] || "activity")
+    apply_pinning &&= !options[:unordered] || options[:prioritize_pinned]
+
+    topics = prioritize_pinned_topics(topics, options) if apply_pinning
 
     topics = topics.to_a
 
@@ -653,8 +684,20 @@ class TopicQuery
   end
 
   def apply_ordering(result, options = {})
-    sort_column = SORTABLE_MAPPING[options[:order]] || "default"
+    order_option = options[:order]
     sort_dir = (options[:ascending] == "true") ? "ASC" : "DESC"
+
+    new_result =
+      DiscoursePluginRegistry.apply_modifier(
+        :topic_query_apply_ordering_result,
+        result,
+        order_option,
+        sort_dir,
+        options,
+        self,
+      )
+    return new_result if !new_result.nil? && new_result != result
+    sort_column = SORTABLE_MAPPING[order_option] || "default"
 
     # If we are sorting in the default order desc, we should consider including pinned
     # topics. Otherwise, just use bumped_at.
@@ -696,7 +739,7 @@ class TopicQuery
   end
 
   def get_category_id(category_id_or_slug)
-    return nil unless category_id_or_slug.present?
+    return nil if category_id_or_slug.blank?
     category_id = category_id_or_slug.to_i
 
     if category_id == 0
@@ -732,7 +775,7 @@ class TopicQuery
     category_id = get_category_id(options[:category])
     @options[:category_id] = category_id
     if category_id
-      if options[:no_subcategories]
+      if ActiveModel::Type::Boolean.new.cast(options[:no_subcategories])
         result = result.where("topics.category_id = ?", category_id)
       else
         result = result.where("topics.category_id IN (?)", Category.subcategory_ids(category_id))
@@ -985,7 +1028,7 @@ class TopicQuery
     return list if muted_tag_ids.blank?
 
     # if viewing the topic list for a muted tag, show all the topics
-    if !opts[:no_tags] && opts[:tags].present?
+    if !ActiveModel::Type::Boolean.new.cast(opts[:no_tags]) && opts[:tags].present?
       if TagUser
            .lookup(user, :muted)
            .joins(:tag)
@@ -1238,7 +1281,9 @@ class TopicQuery
 
     if tags_arg && tags_arg.size > 0
       tags_arg = tags_arg.split if String === tags_arg
-      tags_query = tags_arg[0].is_a?(String) ? Tag.where_name(tags_arg) : Tag.where(id: tags_arg)
+      tags_query = DiscourseTagging.visible_tags(@guardian)
+      tags_query =
+        tags_arg[0].is_a?(String) ? tags_query.where_name(tags_arg) : tags_query.where(id: tags_arg)
       tags = tags_query.select(:id, :target_tag_id).map { |t| t.target_tag_id || t.id }.uniq
 
       if ActiveModel::Type::Boolean.new.cast(@options[:match_all_tags])
@@ -1260,10 +1305,8 @@ class TopicQuery
         result = result.joins(:tags).where("tags.id in (?)", tags)
       end
 
-      # TODO: this is very side-effecty and should be changed
-      # It is done cause further up we expect normalized tags
-      @options[:tags] = tags
-    elsif @options[:no_tags]
+      @options[:tag_ids] = tags
+    elsif ActiveModel::Type::Boolean.new.cast(@options[:no_tags])
       # the following will do: ("topics"."id" NOT IN (SELECT DISTINCT "topic_tags"."topic_id" FROM "topic_tags"))
       result = result.where.not(id: TopicTag.distinct.select(:topic_id))
     end

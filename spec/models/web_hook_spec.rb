@@ -57,7 +57,7 @@ RSpec.describe WebHook do
       assign_event_types = WebHookEventType.active.where(group: "assign").pluck(:name)
       expect(assign_event_types).to eq(%w[assigned unassigned])
 
-      SiteSetting.stubs(:voting_enabled).returns(true)
+      SiteSetting.stubs(:topic_voting_enabled).returns(true)
       voting_event_types = WebHookEventType.active.where(group: "voting").pluck(:name)
       expect(voting_event_types).to eq(%w[topic_upvote topic_unvote])
       #
@@ -146,7 +146,7 @@ RSpec.describe WebHook do
   end
 
   describe "enqueues hooks" do
-    let(:user) { Fabricate(:user) }
+    let(:user) { Fabricate(:user, refresh_auto_groups: true) }
     let(:admin) { Fabricate(:admin) }
     let(:topic) { Fabricate(:topic, user: user) }
     let(:post) { Fabricate(:post, topic: topic, user: user) }
@@ -361,6 +361,27 @@ RSpec.describe WebHook do
       expect(job_args["event_name"]).to eq("topic_recovered")
       payload = JSON.parse(job_args["payload"])
       expect(payload["id"]).to eq(post.topic.id)
+    end
+
+    it "should serialize the right topic posts counts when a post is deleted" do
+      Fabricate(:web_hook)
+
+      Jobs::EmitWebHookEvent.jobs.clear
+
+      post2 =
+        PostCreator.create!(
+          user,
+          raw: "post",
+          topic_id: topic.id,
+          reply_to_post_number: post.post_number,
+          skip_validations: true,
+        )
+      PostDestroyer.new(user, post2).destroy
+
+      job_args = Jobs::EmitWebHookEvent.jobs.last["args"].first
+      payload = JSON.parse(job_args["payload"])
+      expect(payload["topic_posts_count"]).to eq(1)
+      expect(payload["topic_filtered_posts_count"]).to eq(1)
     end
 
     it "should enqueue the destroyed hooks with tag filter for post events" do
@@ -650,7 +671,7 @@ RSpec.describe WebHook do
     end
 
     context "with user promoted hooks" do
-      fab!(:user_promoted_web_hook) { Fabricate(:user_promoted_web_hook) }
+      fab!(:user_promoted_web_hook)
       fab!(:another_user) { Fabricate(:user, trust_level: 2) }
 
       it "should pass the user to the webhook job when a user is promoted" do
@@ -670,7 +691,7 @@ RSpec.describe WebHook do
     end
 
     context "with like created hooks" do
-      fab!(:like_web_hook) { Fabricate(:like_web_hook) }
+      fab!(:like_web_hook)
       fab!(:another_user) { Fabricate(:user) }
 
       it "should pass the group id to the emit webhook job" do
@@ -689,7 +710,15 @@ RSpec.describe WebHook do
 
         DiscourseEvent.trigger(:like_created, like)
 
-        assert_hook_was_queued_with(post, user, group_ids: [group.id])
+        assert_hook_was_queued_with(
+          post,
+          user,
+          group_ids: [
+            Group::AUTO_GROUPS[:trust_level_0],
+            Group::AUTO_GROUPS[:trust_level_1],
+            group.id,
+          ],
+        )
       end
 
       it "should pass the category id to the emit webhook job" do

@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 RSpec.describe SidebarSectionsController do
-  fab!(:user) { Fabricate(:user) }
-  fab!(:admin) { Fabricate(:admin) }
-  fab!(:moderator) { Fabricate(:moderator) }
+  fab!(:user)
+  fab!(:admin)
+  fab!(:moderator)
 
   describe "#index" do
     fab!(:sidebar_section) { Fabricate(:sidebar_section, title: "private section", user: user) }
@@ -54,8 +54,8 @@ RSpec.describe SidebarSectionsController do
                  value: "http://#{Discourse.current_hostname}/categories",
                },
                { icon: "address-book", name: "tags", value: "/tags" },
-               { icon: "external-link-alt", name: "Discourse", value: "https://discourse.org" },
-               { icon: "external-link-alt", name: "My preferences", value: "/my/preferences" },
+               { icon: "up-right-from-square", name: "Discourse", value: "https://discourse.org" },
+               { icon: "up-right-from-square", name: "My preferences", value: "/my/preferences" },
              ],
            }
 
@@ -77,11 +77,11 @@ RSpec.describe SidebarSectionsController do
       expect(sidebar_section.sidebar_urls.second.name).to eq("tags")
       expect(sidebar_section.sidebar_urls.second.value).to eq("/tags")
       expect(sidebar_section.sidebar_urls.second.external).to be false
-      expect(sidebar_section.sidebar_urls.third.icon).to eq("external-link-alt")
+      expect(sidebar_section.sidebar_urls.third.icon).to eq("up-right-from-square")
       expect(sidebar_section.sidebar_urls.third.name).to eq("Discourse")
       expect(sidebar_section.sidebar_urls.third.value).to eq("https://discourse.org")
       expect(sidebar_section.sidebar_urls.third.external).to be true
-      expect(sidebar_section.sidebar_urls.fourth.icon).to eq("external-link-alt")
+      expect(sidebar_section.sidebar_urls.fourth.icon).to eq("up-right-from-square")
       expect(sidebar_section.sidebar_urls.fourth.name).to eq("My preferences")
       expect(sidebar_section.sidebar_urls.fourth.value).to eq("/my/preferences")
       expect(sidebar_section.sidebar_urls.fourth.external).to be false
@@ -94,7 +94,7 @@ RSpec.describe SidebarSectionsController do
 
       links =
         6.times.map do
-          { icon: "external-link-alt", name: "My preferences", value: "/my/preferences" }
+          { icon: "up-right-from-square", name: "My preferences", value: "/my/preferences" }
         end
 
       post "/sidebar_sections.json", params: { title: "custom section", links: links }
@@ -261,7 +261,7 @@ RSpec.describe SidebarSectionsController do
 
       links =
         6.times.map do
-          { icon: "external-link-alt", name: "My preferences", value: "/my/preferences" }
+          { icon: "up-right-from-square", name: "My preferences", value: "/my/preferences" }
         end
 
       put "/sidebar_sections/#{sidebar_section.id}.json",
@@ -367,72 +367,6 @@ RSpec.describe SidebarSectionsController do
       expect(community_section.sidebar_urls[0].value).to eq("/my_posts")
       expect(community_section.sidebar_urls[1].name).to eq("topics edited")
       expect(community_section.sidebar_urls[1].value).to eq("/new")
-    end
-  end
-
-  describe "#reorder" do
-    fab!(:user2) { Fabricate(:user) }
-    fab!(:sidebar_section) { Fabricate(:sidebar_section, user: user) }
-    fab!(:sidebar_url_1) { Fabricate(:sidebar_url, name: "tags", value: "/tags") }
-    fab!(:sidebar_url_2) { Fabricate(:sidebar_url, name: "categories", value: "/categories") }
-    fab!(:sidebar_url_3) { Fabricate(:sidebar_url, name: "topic", value: "/t/1") }
-
-    fab!(:section_link_1) do
-      Fabricate(:sidebar_section_link, sidebar_section: sidebar_section, linkable: sidebar_url_1)
-    end
-
-    fab!(:section_link_2) do
-      Fabricate(:sidebar_section_link, sidebar_section: sidebar_section, linkable: sidebar_url_2)
-    end
-
-    fab!(:section_link_3) do
-      Fabricate(:sidebar_section_link, sidebar_section: sidebar_section, linkable: sidebar_url_3)
-    end
-
-    it "sorts links" do
-      expect(sidebar_section.sidebar_urls.pluck(:id)).to eq(
-        [sidebar_url_1.id, sidebar_url_2.id, sidebar_url_3.id],
-      )
-
-      sign_in(user)
-
-      post "/sidebar_sections/reorder.json",
-           params: {
-             sidebar_section_id: sidebar_section.id,
-             links_order: [sidebar_url_2.id, sidebar_url_3.id, sidebar_url_1.id],
-           }
-
-      expect(response.status).to eq(200)
-
-      expect(sidebar_section.reload.sidebar_urls.pluck(:id)).to eq(
-        [sidebar_url_2.id, sidebar_url_3.id, sidebar_url_1.id],
-      )
-    end
-
-    it "returns 403 when a user tries to reorder a section that doesn't belong to them" do
-      sign_in(user2)
-
-      post "/sidebar_sections/reorder.json",
-           params: {
-             sidebar_section_id: sidebar_section.id,
-             links_order: [sidebar_url_2.id, sidebar_url_3.id, sidebar_url_1.id],
-           }
-
-      expect(response.status).to eq(403)
-
-      expect(sidebar_section.reload.sidebar_urls.pluck(:id)).to eq(
-        [sidebar_url_1.id, sidebar_url_2.id, sidebar_url_3.id],
-      )
-    end
-
-    it "returns 403 for an non user" do
-      post "/sidebar_sections/reorder.json",
-           params: {
-             sidebar_section_id: sidebar_section.id,
-             links_order: [sidebar_url_2.id, sidebar_url_3.id, sidebar_url_1.id],
-           }
-
-      expect(response.status).to eql(403)
     end
   end
 

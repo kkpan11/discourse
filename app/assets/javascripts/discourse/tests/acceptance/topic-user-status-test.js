@@ -1,14 +1,12 @@
 import { visit } from "@ember/test-helpers";
 import { test } from "qunit";
+import { cloneJSON } from "discourse/lib/object";
 import TopicFixtures from "discourse/tests/fixtures/topic";
 import {
   acceptance,
-  exists,
   publishToMessageBus,
   query,
-  queryAll,
 } from "discourse/tests/helpers/qunit-helpers";
-import { cloneJSON } from "discourse-common/lib/object";
 
 acceptance("Topic - User Status", function (needs) {
   const status = { emoji: "tooth", description: "off to dentist" };
@@ -33,11 +31,9 @@ acceptance("Topic - User Status", function (needs) {
     this.siteSettings.enable_user_status = true;
     await visit("/t/-/299/1");
 
-    assert.equal(
-      queryAll(".topic-post .user-status-message").length,
-      3,
-      "all posts has user status"
-    );
+    assert
+      .dom(".topic-post .user-status-message")
+      .exists({ count: 3 }, "all posts has user status");
   });
 
   test("shows user status next to avatar on posts when displaying names on posts is enabled", async function (assert) {
@@ -46,11 +42,9 @@ acceptance("Topic - User Status", function (needs) {
 
     await visit("/t/-/299/1");
 
-    assert.equal(
-      queryAll(".topic-post .user-status-message").length,
-      3,
-      "all posts has user status"
-    );
+    assert
+      .dom(".topic-post .user-status-message")
+      .exists({ count: 3 }, "all posts has user status");
   });
 });
 
@@ -75,12 +69,10 @@ acceptance("Topic - User Status - live updates", function (needs) {
     this.siteSettings.enable_user_status = true;
 
     await visit("/t/-/299/1");
-    assert.equal(
-      queryAll(".topic-post .user-status-message").length,
-      3,
-      "all posts has user status"
-    );
-    assert.ok(
+    assert
+      .dom(".topic-post .user-status-message")
+      .exists({ count: 3 }, "all posts has user status");
+    assert.true(
       query(".topic-post .user-status-message .emoji").src.includes(
         status.emoji
       ),
@@ -90,12 +82,10 @@ acceptance("Topic - User Status - live updates", function (needs) {
     const newStatus = { emoji: "surfing_man", description: "surfing" };
     await publishToMessageBus(`/user-status`, { [userId]: newStatus });
 
-    assert.equal(
-      queryAll(".topic-post .user-status-message").length,
-      3,
-      "all posts has user status"
-    );
-    assert.ok(
+    assert
+      .dom(".topic-post .user-status-message")
+      .exists({ count: 3 }, "all posts has user status");
+    assert.true(
       query(".topic-post .user-status-message .emoji").src.includes(
         newStatus.emoji
       ),
@@ -107,12 +97,10 @@ acceptance("Topic - User Status - live updates", function (needs) {
     this.siteSettings.enable_user_status = true;
 
     await visit("/t/-/299/1");
-    assert.equal(
-      queryAll(".topic-post .user-status-message").length,
-      3,
-      "all posts has user status"
-    );
-    assert.ok(
+    assert
+      .dom(".topic-post .user-status-message")
+      .exists({ count: 3 }, "all posts has user status");
+    assert.true(
       query(".topic-post .user-status-message .emoji").src.includes(
         status.emoji
       ),
@@ -121,20 +109,17 @@ acceptance("Topic - User Status - live updates", function (needs) {
 
     await publishToMessageBus(`/user-status`, { [userId]: null });
 
-    assert.notOk(
-      exists(".topic-post .user-status-message"),
-      "status on all posts has disappeared"
-    );
+    assert
+      .dom(".topic-post .user-status-message")
+      .doesNotExist("status on all posts has disappeared");
 
     const newStatus = { emoji: "surfing_man", description: "surfing" };
     await publishToMessageBus(`/user-status`, { [userId]: newStatus });
 
-    assert.equal(
-      queryAll(".topic-post .user-status-message").length,
-      3,
-      "all posts have user status"
-    );
-    assert.ok(
+    assert
+      .dom(".topic-post .user-status-message")
+      .exists({ count: 3 }, "all posts have user status");
+    assert.true(
       query(".topic-post .user-status-message .emoji").src.includes(
         newStatus.emoji
       ),

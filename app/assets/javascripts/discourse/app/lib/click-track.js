@@ -1,14 +1,14 @@
 import jQuery from "jquery";
 import { Promise } from "rsvp";
 import { ajax } from "discourse/lib/ajax";
+import deprecated from "discourse/lib/deprecated";
+import { isTesting } from "discourse/lib/environment";
+import { getOwnerWithFallback } from "discourse/lib/get-owner";
+import getURL, { samePrefix } from "discourse/lib/get-url";
 import { wantsNewWindow } from "discourse/lib/intercept-click";
 import DiscourseURL from "discourse/lib/url";
 import User from "discourse/models/user";
-import { isTesting } from "discourse-common/config/environment";
-import deprecated from "discourse-common/lib/deprecated";
-import { getOwnerWithFallback } from "discourse-common/lib/get-owner";
-import getURL, { samePrefix } from "discourse-common/lib/get-url";
-import I18n from "I18n";
+import { i18n } from "discourse-i18n";
 
 export function isValidLink(link) {
   if (link instanceof jQuery) {
@@ -73,7 +73,7 @@ export function openLinkInNewTab(event, link) {
 }
 
 export default {
-  trackClick(e, siteSettings, { returnPromise = false } = {}) {
+  trackClick(e, owner, { returnPromise = false } = {}) {
     // right clicks are not tracked
     if (e.which === 3) {
       return true;
@@ -95,15 +95,17 @@ export default {
     if (!href || href.startsWith("mailto:")) {
       return true;
     }
+    owner?.lookup("service:app-events").trigger("click-tracked", href);
 
     if (link.classList.contains("attachment")) {
       // Warn the user if they cannot download the file.
       if (
-        siteSettings?.prevent_anons_from_downloading_files &&
+        owner?.lookup("service:site-settings")
+          ?.prevent_anons_from_downloading_files &&
         !User.current()
       ) {
         const dialog = getOwnerWithFallback(this).lookup("service:dialog");
-        dialog.alert(I18n.t("post.errors.attachment_download_requires_login"));
+        dialog.alert(i18n("post.errors.attachment_download_requires_login"));
       } else if (wantsNewWindow(e)) {
         const newWindow = window.open(href, "_blank");
         newWindow.opener = null;
@@ -148,7 +150,7 @@ export default {
         data.append("topic_id", topicId);
         navigator.sendBeacon(getURL("/clicks/track"), data);
       } else {
-        trackPromise = ajax(getURL("/clicks/track"), {
+        trackPromise = ajax("/clicks/track", {
           type: "POST",
           data: {
             url: href,

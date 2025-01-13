@@ -47,24 +47,43 @@
       display: block;
       text-align: right;
       padding-right: 0;
-      margin-top: 5px;
+      &:first-child {
+        margin-top: 0.75em;
+      }
     }
   }
 
   .subcategories {
-    margin-top: 0.25em;
-    clear: both;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.15em 0.75em;
+    margin-top: 0.5em;
     .subcategory {
       display: inline-flex;
       align-items: baseline;
-      margin-right: 0.3em;
+      gap: 0.25em;
+      @include ellipsis;
+      .badge-category {
+        min-width: 0;
+      }
     }
-    .badge-wrapper {
-      margin-right: 0.5em;
+    .category__badges {
+      display: flex;
+      gap: 0.25em;
+      .badge-notification {
+        top: 0;
+        padding: 0;
+      }
     }
     .badge-notification.unread-posts {
       display: block;
       padding: 0;
+    }
+    &__more-subcategories {
+      font-size: var(--font-down-1);
+      a {
+        color: var(--primary-high);
+      }
     }
   }
 
@@ -88,11 +107,17 @@
     .title {
       margin-right: 5px;
     }
+
+    &.--glimmer button.-trigger {
+      background: transparent;
+      border: none;
+      padding: 0;
+    }
   }
 
   tbody {
     .category {
-      border-left: 6px solid var(--category-color, var(--primary-low));
+      border-left: 6px solid var(--category-badge-color, var(--primary-low));
       h3,
       h4 {
         line-height: var(--line-height-medium);
@@ -143,10 +168,6 @@
     .discourse-tag {
       font-size: var(--font-down-1);
     }
-  }
-
-  .topic-featured-link {
-    padding-left: 8px;
   }
 
   .subcategories-with-subcategories {

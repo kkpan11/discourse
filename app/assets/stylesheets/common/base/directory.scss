@@ -4,6 +4,11 @@
 }
 
 .directory {
+  .directory-value-list-item:not(:empty)
+    ~ .directory-value-list-item:not(:empty):before {
+    content: "| ";
+  }
+
   margin-bottom: 100px;
   background: var(--d-content-background);
 
@@ -70,18 +75,9 @@
       }
     }
   }
-  .modal-footer {
-    display: flex;
+  .d-modal__footer {
     justify-content: space-between;
-
-    .reset-to-default {
-      margin-right: 0;
-    }
   }
-}
-
-.edit-user-directory-columns-modal .modal-inner-container {
-  min-width: 450px;
 }
 
 @container (min-width: 47em) {
@@ -127,7 +123,13 @@
   &__header,
   &__body,
   &__row {
-    display: contents; // we'll be able to remove this with subgrid support
+    display: contents;
+
+    @supports (grid-template-rows: subgrid) {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+    }
   }
 
   &__column-header,
@@ -314,7 +316,7 @@
       }
     }
 
-    [class*="--empty"] {
+    .--empty {
       display: none;
     }
   }

@@ -46,7 +46,12 @@ class ListController < ApplicationController
                   TopTopic.periods.map { |p| :"category_top_#{p}" },
                   TopTopic.periods.map { |p| :"category_none_top_#{p}" },
                   :group_topics,
+                  :filter,
                 ].flatten
+
+  rescue_from ActionController::Redirecting::UnsafeRedirectError do
+    rescue_discourse_actions(:not_found, 404)
+  end
 
   # Create our filters
   Discourse.filters.each do |filter|
@@ -91,7 +96,7 @@ class ListController < ApplicationController
 
         # Note the first is the default and we don't add a title
         if (filter.to_s != current_homepage) && use_crawler_layout?
-          filter_title = I18n.t("js.filters.#{filter.to_s}.title", count: 0)
+          filter_title = I18n.t("js.filters.#{filter}.title", count: 0)
 
           if list_opts[:category] && @category
             @title =
@@ -121,8 +126,6 @@ class ListController < ApplicationController
   end
 
   def filter
-    raise Discourse::NotFound if !SiteSetting.experimental_topics_filter
-
     topic_query_opts = { no_definitions: !SiteSetting.show_category_definitions_in_topic_lists }
 
     %i[page q].each do |key|
@@ -144,7 +147,7 @@ class ListController < ApplicationController
   def category_default
     canonical_url "#{Discourse.base_url_no_prefix}#{@category.url}"
     view_method = @category.default_view
-    view_method = "latest" unless %w[latest top].include?(view_method)
+    view_method = "latest" if %w[latest top].exclude?(view_method)
 
     self.public_send(view_method, category: @category.id)
   end
@@ -256,6 +259,14 @@ class ListController < ApplicationController
     TopTopic.validate_period(period)
 
     @topic_list = TopicQuery.new(nil).list_top_for(period)
+
+    render "list", formats: [:rss]
+  end
+
+  def hot_feed
+    discourse_expires_in 1.minute
+
+    @topic_list = TopicQuery.new(nil).list_hot
 
     render "list", formats: [:rss]
   end
@@ -408,7 +419,7 @@ class ListController < ApplicationController
     end
     real_slug = @category.full_slug("/")
     if CGI.unescape(current_slug) != CGI.unescape(real_slug)
-      url = request.fullpath.gsub(current_slug, real_slug)
+      url = CGI.unescape(request.fullpath).gsub(current_slug, real_slug)
       if ActionController::Base.config.relative_url_root
         url = url.sub(ActionController::Base.config.relative_url_root, "")
       end
